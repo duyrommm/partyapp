@@ -167,6 +167,8 @@ def test_bell_elimination_saved_all_late_and_revive(c):
                 w.send_json({"t": "ans", "q": q2, "o": 1}); until(w, lambda m: m.get("t") == "ack")
             mc(c, a="quiz_reveal", qseq=q2)
             assert A.S["quiz"]["result"]["saved_all"] is True
+            m = state_of(wa, lambda m: m["c"]["quiz"]["phase"] == "reveal")
+            assert m["c"]["quiz"]["saved_all"] is True and m["me"]["alive"] is True, "điện thoại phải biết là được giữ lại vì không ai đúng"
             assert set(A.S["quiz"]["alive"]) == {pid(ta), pid(tc)}
             assert mc(c, a="bell_revive").status_code == 200
             assert len(A.S["quiz"]["alive"]) == 4

@@ -674,6 +674,9 @@ def player_common():
                 cq["ans"] = qq["ans"]
         if q["kind"] == "bell":
             cq["alive"] = len(eligible(q))
+            if q["result"] and q["phase"] in ("reveal", "board"):
+                cq["saved_all"] = q["result"].get("saved_all", False)
+                cq["out"] = q["result"].get("out", 0)
         common["quiz"] = cq
     if S["mode"] == "vote" and S["vote"]:
         common["vote"] = vote_public(S["vote"], reveal=not S["vote"]["open"])

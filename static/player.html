@@ -136,7 +136,7 @@ function quizView(q, me) {
   if (q.phase === "ready") {
     return [h("div", { class: "big-emoji center" }, bell ? "🔔" : "🧠"),
       ...head(bell ? "Rung chuông vàng" : "Đố vui có thưởng",
-        bell ? "Trả lời sai hoặc không kịp là bị loại. Người trụ lại cuối cùng thắng!"
+        bell ? "Trả lời sai hoặc không kịp là bị loại. Nếu cả lượt không ai đúng thì giữ lại tất cả. Người trụ lại cuối cùng thắng!"
              : "Trả lời đúng và càng nhanh thì càng nhiều điểm. Điểm của bạn cộng vào thành tích của nhóm."),
       bell && me.late ? null : h("p", { class: "p-sub center" }, "Chuẩn bị nhé, câu hỏi sắp xuất hiện…")];
   }
@@ -168,6 +168,13 @@ function quizView(q, me) {
   if (q.phase === "reveal") {
     const answered = me.answer !== null && me.answer !== undefined;
     const ok = answered && me.answer === q.ans;
+    if (bell && q.saved_all && me.alive) {
+      return [h("div", { class: "result good" },
+          h("div", { class: "big-emoji" }, "😮‍💨"),
+          h("div", { class: "p-title" }, "Không ai trả lời đúng!"),
+          h("p", { class: "p-sub", style: { color: "#fff" } }, `Theo luật, cả ${q.alive} người được giữ lại. Bạn vẫn trong cuộc!`)),
+        h("p", { class: "p-sub center" }, `Đáp án đúng: ${LETTERS[q.ans]}. ${q.opts[q.ans]}`)];
+    }
     return [h("div", { class: "result " + (ok ? "good" : "bad") },
         h("div", { class: "big-emoji" }, ok ? "🎉" : (answered ? "😅" : "⌛")),
         h("div", { class: "p-title" }, ok ? "Chính xác!" : (answered ? "Tiếc quá, chưa đúng" : "Không kịp trả lời")),
@@ -191,7 +198,8 @@ function statsView(me) {
     h("div", { class: "stat", style: { gridColumn: "1 / -1" } }, h("span", null, "Nhóm " + me.group_name + " đang xếp"), h("b", null, me.grank ? "#" + me.grank : "–")));
 }
 function bellStat(q, me) {
-  return h("div", { class: "stat" }, h("span", null, "Còn trong cuộc"), h("b", null, q.alive + " người"));
+  return [h("div", { class: "stat" }, h("span", null, "Còn trong cuộc"), h("b", null, q.alive + " người")),
+    q.saved_all ? h("p", { class: "p-sub center" }, "Câu vừa rồi không ai đúng, nên tất cả được giữ lại.") : null];
 }
 
 function voteView(v, me) {

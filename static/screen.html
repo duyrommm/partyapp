@@ -84,7 +84,7 @@ function quizView(q) {
       h("div", { style: { fontSize: "7vw" } }, bell ? "🔔" : "🧠"),
       h("div", { class: "sq-q" }, title),
       h("p", { style: { fontSize: "2vw", color: "var(--muted)", maxWidth: "60vw", margin: "1.5vw auto" } },
-        bell ? "Trả lời sai hoặc không kịp là dừng cuộc chơi. Người trụ lại cuối cùng thắng."
+        bell ? "Trả lời sai hoặc không kịp là dừng cuộc chơi. Nếu cả lượt không ai đúng thì giữ lại tất cả. Người trụ lại cuối cùng thắng."
              : "Trả lời đúng, càng nhanh càng nhiều điểm. Điểm cá nhân cộng vào thành tích của nhóm."),
       h("div", { style: { fontSize: "2vw", color: "var(--gold)", fontWeight: 700 } },
         bell ? `${fmt(q.alive)} người tham gia` : `${fmt(S.players)} người · ${q.total} câu hỏi`));
@@ -103,7 +103,7 @@ function quizView(q) {
   } else if (q.phase === "reveal" && q.result) {
     const r = q.result;
     let text = `${fmt(r.right)}/${fmt(r.total)} người trả lời đúng.`;
-    if (bell) text = r.saved_all ? "Không ai đúng, tất cả được cứu!" : `${fmt(r.out)} người dừng lại · còn ${fmt(q.alive)} người.`;
+    if (bell) text = r.saved_all ? `Không ai trả lời đúng, nên cả ${fmt(q.alive)} người được giữ lại!` : `${fmt(r.out)} người dừng lại · còn ${fmt(q.alive)} người.`;
     parts.push(h("div", { class: "verdict" }, text));
   }
   return h("div", { class: "sq", style: { gridTemplateRows: "auto auto auto 1fr" } }, parts);
@@ -123,9 +123,14 @@ function scoreBoard(q) {
 }
 
 function bellBoard(q) {
+  const r = q.result;
+  const why = q.phase === "board" && r
+    ? (r.saved_all ? "Câu vừa rồi không ai đúng, nên tất cả được giữ lại" : (r.out ? `Câu vừa rồi có ${fmt(r.out)} người dừng lại` : "Câu vừa rồi ai cũng đúng"))
+    : null;
   return h("div", { class: "bell-big" },
     h("div", { style: { fontSize: "2.4vw", color: "var(--muted)", fontWeight: 600 } }, q.phase === "end" ? "🔔 Người trụ lại cuối cùng" : "Còn trong cuộc"),
     h("div", { class: "count" }, fmt(q.alive)),
+    why ? h("div", { class: "verdict", style: { textAlign: "center" } }, why) : null,
     q.alive_names ? h("div", { class: "names" }, q.alive_names.map(n => h("span", null, n))) : null);
 }
 

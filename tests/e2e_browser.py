@@ -176,6 +176,38 @@ def main():
             check("Người bị loại thấy mình đã dừng", True)
             phones[2][1].screenshot(path=str(SHOTS / "11_phone_out.png"))
 
+            # câu 2: cả 2 người còn lại đều sai → giữ lại cả 2, mọi màn hình phải nói rõ
+            mc.click("button:has-text('Mở câu 2')")
+            for pg in (p0, phones[1][1]):
+                pg.wait_for_selector(".ans")
+                pg.locator(".ans").nth(0).click()          # đáp án đúng là B (25/12)
+            mc.wait_for_selector("button:has-text('Công bố đáp án')")
+            mc.click("button:has-text('Công bố đáp án')")
+            scr.wait_for_selector(".sopt.right")
+            scr.wait_for_timeout(300)
+            check("Cả lượt sai: màn hình lớn báo giữ lại cả 2 người", "Không ai trả lời đúng, nên cả 2 người được giữ lại" in scr.inner_text("body"))
+            p0.wait_for_selector("text=Không ai trả lời đúng!")
+            check("Cả lượt sai: điện thoại báo vẫn trong cuộc theo luật", "cả 2 người được giữ lại" in p0.inner_text("body") and "chưa đúng" not in p0.inner_text("body"))
+            p0.screenshot(path=str(SHOTS / "11b_phone_saved_all.png"))
+            check("Cả lượt sai: trang MC ghi rõ lý do", "giữ lại cả 2 người (theo luật)" in mc.inner_text("body"))
+            mc.click("button:has-text('Xem số người còn lại')")
+            scr.wait_for_selector("text=Câu vừa rồi không ai đúng")
+            check("Cả lượt sai: bảng còn trong cuộc ghi rõ lý do", scr.locator(".bell-big .count").inner_text().strip() == "2")
+            scr.screenshot(path=str(SHOTS / "11c_screen_saved_all.png"))
+
+            # câu 3: chỉ 1 người đúng → còn 1 người, MC được gợi ý kết thúc
+            mc.click("button:has-text('Mở câu 3')")
+            p0.wait_for_selector(".ans")
+            phones[1][1].wait_for_selector(".ans")
+            p0.locator(".ans").nth(2).click()                # đúng: Phần Lan
+            phones[1][1].locator(".ans").nth(0).click()
+            mc.wait_for_selector("button:has-text('Công bố đáp án')")
+            mc.click("button:has-text('Công bố đáp án')")
+            mc.wait_for_selector("text=Chỉ còn 1 người")
+            check("Còn 1 người: MC được gợi ý kết thúc để vinh danh", True)
+            check("Rung chuông vàng: trang MC không hiện bảng điểm cá nhân", "Top cá nhân" not in mc.inner_text("body"))
+            mc.screenshot(path=str(SHOTS / "11d_mc_champion.png"), full_page=True)
+
             # bình chọn
             mc.click("#tabs button:has-text('Bình chọn')")
             mc.click("button:has-text('Nhóm có trang phục Noel đẹp nhất')")

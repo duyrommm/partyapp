@@ -122,7 +122,7 @@ function quizPanel(kind) {
   const name = kind === "bell" ? "Rung chuông vàng" : "Đố vui tính điểm";
   if (!q) {
     return h("div", { class: "card" }, h("h2", null, name),
-      h("p", { class: "muted" }, kind === "bell" ? "Sai hoặc không kịp là bị loại. Nếu cả lượt không ai đúng thì cứu tất cả. Người vào sau khi câu 1 mở chỉ được xem."
+      h("p", { class: "muted" }, kind === "bell" ? "Sai hoặc không kịp là bị loại. Nếu cả lượt không ai đúng thì giữ lại tất cả (không loại ai). Người vào sau khi câu 1 mở chỉ được xem."
                                                 : "Đúng được 500–1000 điểm tuỳ tốc độ. Bảng nhóm tính điểm trung bình mỗi người, nhóm đông hay ít đều công bằng."),
       h("p", { class: "muted" }, `${S.questions.length} câu hỏi đang có (sửa ở tab “Câu hỏi”).`),
       button("Bắt đầu " + name, { a: "quiz_start", kind }, { confirm: other }));
@@ -130,11 +130,12 @@ function quizPanel(kind) {
   const cur = q.idx >= 0 ? S.questions[q.idx] : null, next = S.questions[q.idx + 1];
   const phaseText = { ready: "Chưa mở câu nào", open: "Đang nhận câu trả lời", closed: "Đã đóng, chờ công bố", reveal: "Đã công bố đáp án", board: "Đang hiện bảng xếp hạng", end: "Đã kết thúc" }[q.phase];
   const btns = [];
-  if (["ready", "reveal", "board"].includes(q.phase) && next) btns.push(button(q.idx < 0 ? "Mở câu 1" : `Mở câu ${q.idx + 2}`, { a: "quiz_open", idx: q.idx }));
+  const champion = kind === "bell" && q.alive === 1 && q.idx >= 0;
+  if (["ready", "reveal", "board"].includes(q.phase) && next) btns.push(button(q.idx < 0 ? "Mở câu 1" : `Mở câu ${q.idx + 2}`, { a: "quiz_open", idx: q.idx }, { ghost: champion }));
   if (q.phase === "open") btns.push(button("Đóng sớm", { a: "quiz_close", qseq: q.qseq }, { ghost: true }));
   if (q.phase === "open" || q.phase === "closed") btns.push(button("Công bố đáp án", { a: "quiz_reveal", qseq: q.qseq }));
   if (q.phase === "reveal") btns.push(button(kind === "bell" ? "Xem số người còn lại" : "Bảng xếp hạng", { a: "quiz_board", qseq: q.qseq }, { ghost: !!next }));
-  if (!["open", "end"].includes(q.phase)) btns.push(button("Kết thúc, xem chung cuộc", { a: "quiz_end" }, { ghost: true, confirm: !!next }));
+  if (!["open", "end"].includes(q.phase)) btns.push(button("Kết thúc, xem chung cuộc", { a: "quiz_end" }, { ghost: !champion, confirm: !!next && !champion }));
   if (kind === "bell" && q.phase !== "open") btns.push(button("Hồi sinh tất cả", { a: "bell_revive" }, { ghost: true, confirm: true }));
   if (q.phase === "end") btns.push(button("Chơi lại từ đầu", { a: "quiz_start", kind }, { confirm: true }));
   const counts = q.live_counts || [];
@@ -142,6 +143,11 @@ function quizPanel(kind) {
     h("div", { class: "card" },
       h("h2", null, `${name} · ${q.idx >= 0 ? `Câu ${q.idx + 1}/${q.total}` : "Sẵn sàng"} · ${phaseText}`),
       kind === "bell" ? h("p", { class: "muted" }, `Còn trong cuộc: ${q.alive} người`) : null,
+      kind === "bell" && q.result && ["reveal", "board"].includes(q.phase)
+        ? h("p", { class: "ok" }, q.result.saved_all ? `Không ai trả lời đúng → giữ lại cả ${q.alive} người (theo luật).`
+                                                     : `${q.result.right} người đúng · ${q.result.out} người dừng lại.`) : null,
+      kind === "bell" && q.alive === 1 && ["reveal", "board"].includes(q.phase)
+        ? h("p", { class: "ok" }, "🏆 Chỉ còn 1 người: bấm “Kết thúc, xem chung cuộc” để vinh danh.") : null,
       cur ? [h("div", { class: "qa" }, cur.q),
         cur.opts.map((o, i) => h("div", { class: "qo" + (i === cur.ans ? " r" : "") }, `${LETTERS[i]}. ${o}` + (i === cur.ans ? "  ✓" : "") + (q.phase !== "ready" ? `  · ${counts[i] || 0} người` : "")))] : null,
       q.phase === "open" ? h("p", { class: "muted" }, h("span", { class: "timer", "data-left": q.left_ms, "data-at": S._at }, secondsLeft(q.left_ms, S._at) + " giây"),
@@ -150,7 +156,7 @@ function quizPanel(kind) {
       h("div", { style: { display: "grid", gap: "8px" } }, btns),
       S.mode !== "quiz" ? h("div", { style: { marginTop: "8px" } }, showOnScreen("quiz")) : null),
     next && q.phase !== "end" ? h("div", { class: "card" }, h("h2", null, `Câu tiếp theo (${q.idx + 2})`), h("div", { class: "muted" }, next.q)) : null,
-    q.top && q.top.length ? h("div", { class: "card" }, h("h2", null, "Top cá nhân"), q.top.slice(0, 5).map((p, i) => h("div", { class: "line" }, h("span", null, `${i + 1}. ${p.name} · ${p.group}`), h("b", null, p.score.toLocaleString("vi-VN"))))) : null
+    kind === "score" && q.top && q.top.length ? h("div", { class: "card" }, h("h2", null, "Top cá nhân"), q.top.slice(0, 5).map((p, i) => h("div", { class: "line" }, h("span", null, `${i + 1}. ${p.name} · ${p.group}`), h("b", null, p.score.toLocaleString("vi-VN"))))) : null
   ];
 }
 
