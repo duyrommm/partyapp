@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2b21">
+<title>{{EVENT}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=1">
+</head>
+<body>
+<div class="phone">
+  <div class="p-top">
+    <span class="ev">{{EVENT}}</span>
+    <span id="me" class="chip hidden"></span>
+    <span id="dot" class="dot off" title="Kết nối"></span>
+  </div>
+  <main id="main" class="p-main" aria-live="polite"></main>
+</div>
+<script src="/static/common.js?v=1"></script>
+<script>
+"use strict";
+const { h, live, secondsLeft, SHAPES, LETTERS } = PA;
+const main = document.getElementById("main");
+const meChip = document.getElementById("me");
+const dot = document.getElementById("dot");
+const GROUPS = [
+  ["sales-aw","Sales AW","#E4572E"],["sales-pgi","Sales PGI","#F3A712"],["admin","Admin PGI + AW","#A8C256"],
+  ["ecom","Ecom AW + PGI","#29B6A8"],["store","Store AW + PGI","#4C9BE8"],["mkt-aw","MKT AW","#B46EE8"],
+  ["mkt-pgi","MKT PGI","#E86EB4"],["accounting","Accounting AW + PGI","#E8D36E"],["warehouse","Warehouse","#8FD6E8"],
+  ["warranty","Warranty","#F08A6E"],["car-audio","Car Audio + Construction","#7FE0A0"],["it-legal","IT + Legal","#9AA7F5"],
+  ["hn","CN Hà Nội","#F5B5C8"],["dn","CN Đà Nẵng","#C9E86E"]];
+const COLOR = Object.fromEntries(GROUPS.map(g => [g[0], g[2]]));
+
+let token = localStorage.getItem("pa_token") || "";
+let conn = null, S = null, pending = null, flash = "", online = false, lastKey = "";
+
+function setToken(t) { token = t; try { localStorage.setItem("pa_token", t); } catch (_) {} }
+
+// ── vào phòng ──
+function showJoin(err) {
+  if (conn) { conn.stop(); conn = null; }
+  meChip.classList.add("hidden");
+  dot.classList.add("hidden");
+  let group = localStorage.getItem("pa_group") || "";
+  const name = h("input", { type: "text", maxlength: 24, placeholder: "Tên của bạn, ví dụ: Duy Nguyễn", autocomplete: "off", "aria-label": "Tên của bạn",
+    value: localStorage.getItem("pa_name") || "" });
+  const msg = h("div", { class: err ? "notice err" : "hidden", role: "alert" }, err || "");
+  const go = h("button", { class: "btn", type: "submit" }, "Vào chơi");
+  const grid = h("div", { class: "groups", role: "group", "aria-label": "Nhóm của bạn" },
+    GROUPS.map(([code, label, col]) => h("button", { type: "button", class: "gbtn", "aria-pressed": String(code === group),
+      onclick: (e) => { group = code; grid.querySelectorAll(".gbtn").forEach(b => b.setAttribute("aria-pressed", String(b === e.currentTarget))); } },
+      h("i", { style: { background: col } }), label)));
+  const form = h("form", { class: "join", style: { display: "flex", flexDirection: "column", gap: "14px" } },
+    h("h1", { class: "p-title" }, "Chào mừng bạn đến bữa tiệc"),
+    h("p", { class: "p-sub" }, "Nhập tên và chọn nhóm của bạn. Điểm của bạn sẽ cộng vào thành tích của cả nhóm."),
+    msg,
+    h("div", { class: "label" }, "Tên"), name,
+    h("div", { class: "label" }, "Nhóm"), grid,
+    go);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const n = name.value.trim();
+    if (!n) { msg.className = "notice err"; msg.textContent = "Bạn nhập tên giúp mình nhé."; name.focus(); return; }
+    if (!group) { msg.className = "notice err"; msg.textContent = "Bạn chọn nhóm của mình nhé."; return; }
+    go.disabled = true; go.textContent = "Đang vào…";
+    try {
+      const r = await fetch("/api/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: n, group }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Không vào được, thử lại nhé.");
+      localStorage.setItem("pa_name", n); localStorage.setItem("pa_group", group);
+      setToken(j.token);
+      start();
+    } catch (ex) {
+      msg.className = "notice err";
+      msg.textContent = ex.message === "Failed to fetch" ? "Mạng đang yếu, bạn thử lại nhé." : ex.message;
+      go.disabled = false; go.textContent = "Vào chơi";
+    }
+  });
+  main.replaceChildren(form);
+}
+
+// ── kết nối ──
+function start() {
+  dot.classList.remove("hidden");
+  main.replaceChildren(h("p", { class: "p-sub center" }, "Đang kết nối…"));
+  conn = live(() => "/ws?role=player&token=" + encodeURIComponent(token), {
+    status: (s) => { online = s === "online"; dot.classList.toggle("off", !online); if (S) render(); },
+    message: (m) => {
+      if (m.t === "nojoin") { try { localStorage.removeItem("pa_token"); } catch (_) {} token = ""; S = null; showJoin(); return; }
+      if (m.t === "ack") {
+        if (m.k === "ans" && m.r === "closed") { pending = null; flash = "Hết giờ trả lời câu này rồi."; }
+        if (m.k === "vote" && m.r === "self") flash = "Không bầu cho nhóm của mình nhé.";
+        if (m.k === "vote" && m.r === "closed") flash = "Bình chọn đã đóng.";
+        render();
+        return;
+      }
+      if (m.t === "state") {
+        const q = m.c.quiz, k = m.c.mode + ":" + (q ? q.qseq + ":" + q.phase : "") + ":" + (m.c.vote ? m.c.vote.id + ":" + m.c.vote.open : "");
+        if (k !== lastKey) { lastKey = k; flash = ""; if (!q || q.phase !== "open") pending = null; }
+        S = m; render();
+      }
+    }
+  });
+}
+
+function head(text, sub) {
+  return [h("h1", { class: "p-title" }, text), sub ? h("p", { class: "p-sub" }, sub) : null];
+}
+
+function render() {
+  if (!S) return;
+  const c = S.c, me = S.me;
+  meChip.classList.remove("hidden");
+  meChip.replaceChildren(h("i", { style: { background: COLOR[me.group] || "#888" } }), me.name);
+  const view = c.mode === "quiz" && c.quiz ? quizView(c.quiz, me)
+             : c.mode === "vote" && c.vote ? voteView(c.vote, me)
+             : c.mode === "draw" && c.draw ? drawView(c.draw, me)
+             : lobbyView(me);
+  const note = !online ? h("div", { class: "notice err", role: "status" }, "Mất kết nối, đang nối lại… Điểm của bạn vẫn được giữ.")
+             : flash ? h("div", { class: "notice", role: "status" }, flash) : null;
+  main.replaceChildren(...[note, ...[].concat(view)].filter(Boolean));
+}
+
+function lobbyView(me) {
+  return [h("div", { class: "big-emoji center" }, "🎄"),
+    ...head("Bạn đã vào phòng!", "Chờ MC bắt đầu trò chơi nhé. Hãy nhìn lên màn hình lớn."),
+    h("div", { class: "stat" }, h("span", null, "Nhóm của bạn"), h("b", { style: { fontSize: "20px" } }, me.group_name))];
+}
+
+function quizView(q, me) {
+  const bell = q.kind === "bell";
+  const label = (bell ? "Rung chuông vàng" : "Đố vui") + (q.idx >= 0 ? ` · câu ${q.idx + 1}/${q.total}` : "");
+  if (q.phase === "ready") {
+    return [h("div", { class: "big-emoji center" }, bell ? "🔔" : "🧠"),
+      ...head(bell ? "Rung chuông vàng" : "Đố vui có thưởng",
+        bell ? "Trả lời sai hoặc không kịp là bị loại. Người trụ lại cuối cùng thắng!"
+             : "Trả lời đúng và càng nhanh thì càng nhiều điểm. Điểm của bạn cộng vào thành tích của nhóm."),
+      bell && me.late ? null : h("p", { class: "p-sub center" }, "Chuẩn bị nhé, câu hỏi sắp xuất hiện…")];
+  }
+  if (bell && me.alive === false && q.phase !== "end") {
+    return [h("div", { class: "big-emoji center" }, "📣"),
+      ...head(me.late ? "Bạn vào muộn mất rồi" : "Bạn đã dừng cuộc chơi", `Còn ${q.alive} người trong cuộc. Cùng cổ vũ nhé!`)];
+  }
+  if (q.phase === "open") {
+    const mine = me.answer !== null && me.answer !== undefined ? me.answer : (pending && pending.q === q.qseq ? pending.o : null);
+    const t = h("span", { class: "timer", "data-left": q.left_ms, "data-at": S._at }, secondsLeft(q.left_ms, S._at) + " giây");
+    const grid = h("div", { class: "answers" + (q.opts.length <= 2 ? " two" : "") },
+      q.opts.map((o, i) => h("button", {
+        class: `ans o${i}` + (mine === null ? "" : (mine === i ? " pick" : " dim")),
+        disabled: mine !== null, "aria-label": `${LETTERS[i]}: ${o}`,
+        onclick: () => {
+          if (pending && pending.q === q.qseq) return;
+          pending = { q: q.qseq, o: i }; flash = "";
+          if (!conn.send({ t: "ans", q: q.qseq, o: i })) { pending = null; flash = "Chưa gửi được vì mất kết nối, bạn chạm lại sau giây lát."; }
+          render();
+        } }, h("span", { class: "sh", "aria-hidden": "true" }, SHAPES[i]), o)));
+    return [h("div", { style: { display: "flex", justifyContent: "space-between" } }, h("span", { class: "p-sub" }, label), t),
+      h("p", { class: "qtext" }, q.q), grid,
+      mine !== null ? h("p", { class: "p-sub center" }, "Đã chốt đáp án. Chờ kết quả nhé!") : null];
+  }
+  if (q.phase === "closed") {
+    return [h("div", { class: "big-emoji center" }, "⏳"), ...head("Hết giờ!", me.answer === null || me.answer === undefined
+      ? "Bạn chưa kịp trả lời câu này." : `Bạn chọn ${LETTERS[me.answer]}. Chờ MC công bố đáp án…`)];
+  }
+  if (q.phase === "reveal") {
+    const answered = me.answer !== null && me.answer !== undefined;
+    const ok = answered && me.answer === q.ans;
+    return [h("div", { class: "result " + (ok ? "good" : "bad") },
+        h("div", { class: "big-emoji" }, ok ? "🎉" : (answered ? "😅" : "⌛")),
+        h("div", { class: "p-title" }, ok ? "Chính xác!" : (answered ? "Tiếc quá, chưa đúng" : "Không kịp trả lời")),
+        !bell && ok ? h("div", { class: "gain" }, "+" + me.gain) : null,
+        bell ? h("p", { class: "p-sub", style: { color: "#fff" } }, me.alive ? "Bạn vẫn trong cuộc!" : "Bạn dừng ở câu này.") : null),
+      h("p", { class: "p-sub center" }, `Đáp án đúng: ${LETTERS[q.ans]}. ${q.opts[q.ans]}`),
+      bell ? null : statsView(me)];
+  }
+  if (q.phase === "board") return [...head("Bảng xếp hạng", "Xem màn hình lớn nhé!"), bell ? bellStat(q, me) : statsView(me)];
+  if (q.phase === "end") {
+    if (bell) return [h("div", { class: "big-emoji center" }, me.alive ? "🏆" : "🔔"), ...head(me.alive ? "Bạn trụ đến cuối cùng!" : "Kết thúc Rung chuông vàng", "Cảm ơn bạn đã chơi!")];
+    return [h("div", { class: "big-emoji center" }, me.rank === 1 ? "🏆" : "🎊"), ...head("Kết thúc!", "Kết quả chung cuộc của bạn:"), statsView(me)];
+  }
+  return lobbyView(me);
+}
+
+function statsView(me) {
+  return h("div", { class: "stats" },
+    h("div", { class: "stat" }, h("span", null, "Điểm của bạn"), h("b", null, (me.score || 0).toLocaleString("vi-VN"))),
+    h("div", { class: "stat" }, h("span", null, "Hạng cá nhân"), h("b", null, me.rank ? "#" + me.rank : "–")),
+    h("div", { class: "stat", style: { gridColumn: "1 / -1" } }, h("span", null, "Nhóm " + me.group_name + " đang xếp"), h("b", null, me.grank ? "#" + me.grank : "–")));
+}
+function bellStat(q, me) {
+  return h("div", { class: "stat" }, h("span", null, "Còn trong cuộc"), h("b", null, q.alive + " người"));
+}
+
+function voteView(v, me) {
+  if (!v.open) {
+    const max = Math.max(1, ...(v.counts || [0]));
+    const best = (v.counts || []).map((n, i) => n === max && n > 0 ? v.opts[i].label : null).filter(Boolean);
+    return [h("div", { class: "big-emoji center" }, "🗳️"), ...head("Đã đóng bình chọn", best.length ? "Dẫn đầu: " + best.join(", ") : "Xem kết quả trên màn hình lớn nhé.")];
+  }
+  return [...head(v.title, v.no_self ? "Chọn 1 lựa chọn. Không bầu cho nhóm mình. Bạn đổi ý được cho tới khi MC đóng." : "Chọn 1 lựa chọn. Bạn đổi ý được cho tới khi MC đóng."),
+    h("div", { class: "vlist" }, v.opts.map((o, i) => {
+      const self = v.no_self && o.group === me.group;
+      return h("button", { class: "vopt", "aria-pressed": String(me.vote === i), disabled: self,
+        onclick: () => { flash = ""; if (!conn.send({ t: "vote", v: v.id, o: i })) flash = "Chưa gửi được vì mất kết nối."; render(); } },
+        o.group ? h("i", { style: { width: "10px", height: "10px", borderRadius: "50%", background: COLOR[o.group] || "#888", flex: "none" } }) : null,
+        o.label, self ? h("span", { class: "tick" }, "nhóm bạn") : (me.vote === i ? h("span", { class: "tick" }, "✓ Đã chọn") : null));
+    }))];
+}
+
+function drawView(d, me) {
+  if (me.won_now) return h("div", { class: "win" }, h("div", { class: "big-emoji" }, "🎁"), h("h2", null, "Bạn trúng thưởng!"),
+    h("p", null, d.prize || "Mời bạn lên sân khấu nhận quà"), h("p", null, "Mời bạn lên sân khấu nhé!"));
+  if (d.phase === "rolling") return [h("div", { class: "big-emoji center" }, "🎰"), ...head("Đang quay số…", d.prize ? "Giải: " + d.prize : "Nhìn lên màn hình lớn nhé!")];
+  if (d.phase === "done" && d.last) return [h("div", { class: "big-emoji center" }, "🎉"), ...head("Chúc mừng " + d.last.name, (d.last.group ? d.last.group + " · " : "") + (d.prize || "")),
+    me.won ? h("p", { class: "p-sub center" }, "Bạn đã trúng: " + me.won) : null];
+  return [h("div", { class: "big-emoji center" }, "🎁"), ...head("Quay số trúng thưởng", "Giữ điện thoại mở để có tên trong vòng quay nhé!")];
+}
+
+// cập nhật đồng hồ đếm ngược mà không vẽ lại cả trang
+setInterval(() => {
+  document.querySelectorAll(".timer[data-left]").forEach(el => {
+    el.textContent = secondsLeft(+el.dataset.left, +el.dataset.at) + " giây";
+  });
+}, 250);
+
+if (token) start(); else showJoin();
+</script>
+</body>
+</html>

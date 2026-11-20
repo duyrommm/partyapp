@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f2b21">
+<title>MC · {{EVENT}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=1">
+</head>
+<body>
+<div class="mc">
+  <div class="p-top">
+    <h1>MC · {{EVENT}}</h1>
+    <span id="dot" class="dot off" title="Kết nối"></span>
+  </div>
+  <p class="muted" id="sum">Đang kết nối…</p>
+  <div class="tabs" id="tabs" role="tablist"></div>
+  <div class="err" id="err" role="alert"></div>
+  <div id="panel"></div>
+</div>
+<script src="/static/common.js?v=1"></script>
+<script>
+"use strict";
+const { h, live, secondsLeft, armed, LETTERS } = PA;
+const $ = (id) => document.getElementById(id);
+let S = null, tab = localStorage.getItem("mc_tab") || "lobby", busy = false;
+const keep = {};       // giữ nội dung ô nhập khi vẽ lại
+const TABS = [["lobby", "Sảnh chờ"], ["score", "Đố vui"], ["bell", "Rung chuông"], ["vote", "Bình chọn"], ["draw", "Quay số"], ["setup", "Câu hỏi"]];
+const MODE_LABEL = { lobby: "Sảnh chờ (mã QR)", quiz: "Hỏi đáp", vote: "Bình chọn", draw: "Quay số" };
+
+PA.onDisarm = () => render();
+document.addEventListener("focusout", () => setTimeout(render, 0));   // gõ xong thì cập nhật
+live("/ws?role=mc", {
+  status: (s) => $("dot").classList.toggle("off", s !== "online"),
+  message: (m) => { if (m.t === "state") { S = m; render(); } }
+});
+
+async function act(body, btn) {
+  if (busy) return;
+  busy = true; $("err").textContent = "";
+  const old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Đang xử lý…"; }
+  try {
+    const r = await fetch("/api/mc", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "Lỗi máy chủ");
+    return j;
+  } catch (e) {
+    $("err").textContent = e.message === "Failed to fetch" ? "Mất mạng, thử lại." : e.message;
+  } finally {
+    busy = false;
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+    render();
+  }
+}
+
+function button(label, body, opts = {}) {
+  const b = h("button", { class: "btn" + (opts.ghost ? " ghost" : "") + (opts.danger ? " danger" : ""), type: "button", disabled: opts.disabled });
+  b.textContent = label;
+  if (opts.confirm) armed(b, label, () => act(typeof body === "function" ? body() : body, b));
+  else b.addEventListener("click", () => act(typeof body === "function" ? body() : body, b));
+  return b;
+}
+
+function saveInputs() {
+  document.querySelectorAll("[data-keep]").forEach(el => { keep[el.dataset.keep] = el.type === "checkbox" ? el.checked : el.value; });
+}
+function kept(key, def) { return key in keep ? keep[key] : def; }
+
+function render() {
+  if (!S) return;
+  const active = document.activeElement;
+  if (active && active.dataset && active.dataset.keep && (active.tagName === "TEXTAREA" || active.type === "text")) {
+    // đang gõ: chỉ cập nhật phần tóm tắt, không vẽ lại ô nhập
+    renderSummary();
+    return;
+  }
+  if ($("panel").querySelector("[data-armed]")) {
+    // có nút đang chờ chạm lần 2: giữ nguyên, vẽ lại khi hết chờ
+    renderSummary();
+    return;
+  }
+  saveInputs();
+  renderSummary();
+  $("tabs").replaceChildren(...TABS.map(([k, l]) => h("button", { type: "button", role: "tab", "aria-pressed": String(tab === k),
+    onclick: () => { saveInputs(); tab = k; localStorage.setItem("mc_tab", k); $("err").textContent = ""; render(); } }, l)));
+  const p = { lobby: lobbyPanel, score: () => quizPanel("score"), bell: () => quizPanel("bell"), vote: votePanel, draw: drawPanel, setup: setupPanel }[tab] || lobbyPanel;
+  $("panel").replaceChildren(...[].concat(p()));
+}
+
+function renderSummary() {
+  $("sum").replaceChildren(`${S.players} người · ${S.online} đang online · Màn hình lớn: `, h("b", null, MODE_LABEL[S.mode] || S.mode), " · ",
+    h("a", { href: "/screen", target: "_blank", style: { color: "var(--gold)" } }, "Mở màn hình lớn"));
+}
+
+function showOnScreen(mode, label) {
+  return S.mode === mode ? null : button(label || "Đưa lên màn hình lớn", { a: "mode", mode }, { ghost: true });
+}
+
+function lobbyPanel() {
+  const byGroup = {};
+  S.roster.forEach(r => (byGroup[r.group] = byGroup[r.group] || []).push(r));
+  return [
+    h("div", { class: "card" }, h("h2", null, "Màn hình chờ"), h("p", { class: "muted" }, "Hiện mã QR to để mọi người quét vào chơi."), showOnScreen("lobby", "Hiện mã QR lên màn hình lớn") || h("p", { class: "ok" }, "Màn hình lớn đang hiện mã QR.")),
+    h("div", { class: "card" }, h("h2", null, `Người chơi (${S.players})`),
+      S.groups.filter(g => g.count).map(g => h("details", null, h("summary", null, `${g.name} · ${g.count}`),
+        (byGroup[g.code] || []).map(r => {
+          const b = h("button", { class: "small", type: "button" }, "Xoá");
+          armed(b, "Xoá", () => act({ a: "remove_player", pid: r.pid }, b));
+          return h("div", { class: "line" }, h("span", null, (r.online ? "🟢 " : "⚪ ") + r.name), b);
+        }))),
+      S.players ? null : h("p", { class: "muted" }, "Chưa có ai vào."))
+  ];
+}
+
+function quizPanel(kind) {
+  const q = S.quiz && S.quiz.kind === kind ? S.quiz : null;
+  const other = S.quiz && S.quiz.kind !== kind && S.mode === "quiz";
+  const name = kind === "bell" ? "Rung chuông vàng" : "Đố vui tính điểm";
+  if (!q) {
+    return h("div", { class: "card" }, h("h2", null, name),
+      h("p", { class: "muted" }, kind === "bell" ? "Sai hoặc không kịp là bị loại. Nếu cả lượt không ai đúng thì cứu tất cả. Người vào sau khi câu 1 mở chỉ được xem."
+                                                : "Đúng được 500–1000 điểm tuỳ tốc độ. Bảng nhóm tính điểm trung bình mỗi người, nhóm đông hay ít đều công bằng."),
+      h("p", { class: "muted" }, `${S.questions.length} câu hỏi đang có (sửa ở tab “Câu hỏi”).`),
+      button("Bắt đầu " + name, { a: "quiz_start", kind }, { confirm: other }));
+  }
+  const cur = q.idx >= 0 ? S.questions[q.idx] : null, next = S.questions[q.idx + 1];
+  const phaseText = { ready: "Chưa mở câu nào", open: "Đang nhận câu trả lời", closed: "Đã đóng, chờ công bố", reveal: "Đã công bố đáp án", board: "Đang hiện bảng xếp hạng", end: "Đã kết thúc" }[q.phase];
+  const btns = [];
+  if (["ready", "reveal", "board"].includes(q.phase) && next) btns.push(button(q.idx < 0 ? "Mở câu 1" : `Mở câu ${q.idx + 2}`, { a: "quiz_open", idx: q.idx }));
+  if (q.phase === "open") btns.push(button("Đóng sớm", { a: "quiz_close", qseq: q.qseq }, { ghost: true }));
+  if (q.phase === "open" || q.phase === "closed") btns.push(button("Công bố đáp án", { a: "quiz_reveal", qseq: q.qseq }));
+  if (q.phase === "reveal") btns.push(button(kind === "bell" ? "Xem số người còn lại" : "Bảng xếp hạng", { a: "quiz_board", qseq: q.qseq }, { ghost: !!next }));
+  if (!["open", "end"].includes(q.phase)) btns.push(button("Kết thúc, xem chung cuộc", { a: "quiz_end" }, { ghost: true, confirm: !!next }));
+  if (kind === "bell" && q.phase !== "open") btns.push(button("Hồi sinh tất cả", { a: "bell_revive" }, { ghost: true, confirm: true }));
+  if (q.phase === "end") btns.push(button("Chơi lại từ đầu", { a: "quiz_start", kind }, { confirm: true }));
+  const counts = q.live_counts || [];
+  return [
+    h("div", { class: "card" },
+      h("h2", null, `${name} · ${q.idx >= 0 ? `Câu ${q.idx + 1}/${q.total}` : "Sẵn sàng"} · ${phaseText}`),
+      kind === "bell" ? h("p", { class: "muted" }, `Còn trong cuộc: ${q.alive} người`) : null,
+      cur ? [h("div", { class: "qa" }, cur.q),
+        cur.opts.map((o, i) => h("div", { class: "qo" + (i === cur.ans ? " r" : "") }, `${LETTERS[i]}. ${o}` + (i === cur.ans ? "  ✓" : "") + (q.phase !== "ready" ? `  · ${counts[i] || 0} người` : "")))] : null,
+      q.phase === "open" ? h("p", { class: "muted" }, h("span", { class: "timer", "data-left": q.left_ms, "data-at": S._at }, secondsLeft(q.left_ms, S._at) + " giây"),
+        ` · ${q.answered}/${q.eligible_online} người online đã trả lời`) : null,
+      h("div", { class: "gap" }),
+      h("div", { style: { display: "grid", gap: "8px" } }, btns),
+      S.mode !== "quiz" ? h("div", { style: { marginTop: "8px" } }, showOnScreen("quiz")) : null),
+    next && q.phase !== "end" ? h("div", { class: "card" }, h("h2", null, `Câu tiếp theo (${q.idx + 2})`), h("div", { class: "muted" }, next.q)) : null,
+    q.top && q.top.length ? h("div", { class: "card" }, h("h2", null, "Top cá nhân"), q.top.slice(0, 5).map((p, i) => h("div", { class: "line" }, h("span", null, `${i + 1}. ${p.name} · ${p.group}`), h("b", null, p.score.toLocaleString("vi-VN"))))) : null
+  ];
+}
+
+function votePanel() {
+  const v = S.vote;
+  const cards = [];
+  if (v) {
+    const counts = v.counts || [];
+    cards.push(h("div", { class: "card" }, h("h2", null, (v.open ? "Đang mở: " : "Đã đóng: ") + v.title + ` · ${v.total} phiếu`),
+      v.opts.map((o, i) => h("div", { class: "line" }, h("span", null, o.label), h("b", null, counts[i] || 0))),
+      h("div", { class: "gap" }),
+      v.open ? button("Đóng bình chọn, chốt kết quả", { a: "vote_close", id: v.id }) : null,
+      S.mode !== "vote" ? h("div", { style: { marginTop: "8px" } }, showOnScreen("vote")) : null));
+  }
+  const title = h("input", { type: "text", "data-keep": "vtitle", value: kept("vtitle", ""), placeholder: "Câu hỏi bình chọn", maxlength: 80 });
+  const opts = h("textarea", { "data-keep": "vopts", placeholder: "Mỗi dòng một lựa chọn", style: { minHeight: "110px", fontFamily: "inherit", fontSize: "15px" } });
+  opts.value = kept("vopts", "");
+  const groupsMode = h("input", { type: "checkbox", "data-keep": "vgroups", checked: kept("vgroups", true) });
+  const noSelf = h("input", { type: "checkbox", "data-keep": "vnoself", checked: kept("vnoself", true) });
+  const sync = () => { opts.disabled = groupsMode.checked; noSelf.disabled = !groupsMode.checked; };
+  groupsMode.addEventListener("change", sync); sync();
+  const presets = h("div", { class: "grid2" }, Object.entries(S.presets).map(([k, t]) => h("button", { class: "small", type: "button",
+    onclick: () => { title.value = t; groupsMode.checked = k === "costume"; sync(); saveInputs(); } }, t)));
+  cards.push(h("div", { class: "card" }, h("h2", null, "Tạo bình chọn mới"), presets, h("div", { class: "gap" }), title, h("div", { class: "gap" }),
+    h("label", { class: "chk" }, groupsMode, "Lựa chọn là 14 nhóm"),
+    h("label", { class: "chk" }, noSelf, "Không cho bầu nhóm của mình"),
+    opts, h("div", { class: "gap" }),
+    button("Mở bình chọn", () => {
+      saveInputs();
+      const list = groupsMode.checked ? S.groups.map(g => ({ label: g.name, group: g.code }))
+        : opts.value.split("\n").map(s => s.trim()).filter(Boolean).map(label => ({ label }));
+      return { a: "vote_start", title: title.value, opts: list, no_self: groupsMode.checked && noSelf.checked };
+    }, { confirm: !!(v && v.open) })));
+  return cards;
+}
+
+function drawPanel() {
+  const d = S.draw;
+  const prize = h("input", { type: "text", "data-keep": "prize", value: kept("prize", ""), placeholder: "Tên giải, ví dụ: Giải Ba – Tai nghe", maxlength: 60 });
+  const onlyOnline = h("input", { type: "checkbox", "data-keep": "online", checked: kept("online", true) });
+  const roll = button(d.phase === "rolling" ? "Đang quay…" : "Quay!", () => { saveInputs(); return { a: "draw_roll", prize: prize.value, seq: d.seq, only_online: onlyOnline.checked }; }, { disabled: d.phase === "rolling" });
+  const last = d.winners.length ? d.winners[d.winners.length - 1] : null;
+  return [
+    h("div", { class: "card" }, h("h2", null, `Quay số · ${d.pool} người trong vòng quay`),
+      prize, h("label", { class: "chk" }, onlyOnline, "Chỉ quay người đang mở app (đang có mặt)"), roll,
+      last && d.phase === "done" && !last.absent ? h("div", { style: { marginTop: "8px" } }, button(`${last.name} vắng mặt, huỷ kết quả`, { a: "draw_absent", seq: d.seq }, { ghost: true, confirm: true })) : null,
+      S.mode !== "draw" ? h("div", { style: { marginTop: "8px" } }, showOnScreen("draw")) : null),
+    d.winners.length ? h("div", { class: "card" }, h("h2", null, "Đã trúng"), d.winners.slice().reverse().map(w => h("div", { class: "line" },
+      h("span", null, w.absent ? h("s", null, w.name) : w.name, " · ", w.group), h("span", { class: "muted" }, w.absent ? "vắng" : (w.prize || ""))))) : null
+  ];
+}
+
+function setupPanel() {
+  const ta = h("textarea", { "data-keep": "qtext", style: { minHeight: "260px" } });
+  ta.value = kept("qtext", S.questions.map(q => [q.q, ...q.opts, LETTERS[q.ans], q.time].join("\t")).join("\n"));
+  const reset = h("button", { class: "btn danger", type: "button" }, "Xoá hết người chơi và điểm (bắt đầu lại)");
+  armed(reset, reset.textContent, () => act({ a: "reset" }, reset));
+  const msg = h("p", { class: "ok" });
+  return [
+    h("div", { class: "card" }, h("h2", null, `Câu hỏi (${S.questions.length})`),
+      h("p", { class: "muted" }, "Soạn trên Google Sheet theo cột: Câu hỏi | A | B | C | D | Đáp án (A/B/C/D) | Số giây (không bắt buộc). Bôi đen các dòng, Ctrl+C rồi dán vào đây. Câu chỉ có 2–3 lựa chọn thì để trống cột thừa."),
+      ta, h("div", { class: "gap" }),
+      button("Lưu câu hỏi", () => { saveInputs(); return { a: "questions", text: ta.value }; }),
+      h("div", { class: "gap" }),
+      h("button", { class: "btn ghost", type: "button", onclick: () => { delete keep.qtext; render(); } }, "Bỏ thay đổi, tải lại từ máy chủ"),
+      msg),
+    h("div", { class: "card" }, h("h2", null, "Bắt đầu lại"), h("p", { class: "muted" }, "Dùng sau buổi demo trước khi vào tiệc thật. Câu hỏi được giữ lại."), reset)
+  ];
+}
+
+setInterval(() => {
+  document.querySelectorAll(".timer[data-left]").forEach(el => { el.textContent = secondsLeft(+el.dataset.left, +el.dataset.at) + " giây"; });
+}, 250);
+</script>
+</body>
+</html>

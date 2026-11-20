@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{EVENT}} · Màn hình lớn</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=1">
+</head>
+<body>
+<div class="snow" id="snow" aria-hidden="true"></div>
+<div class="screen">
+  <header class="s-top">
+    <h1>{{EVENT}}</h1>
+    <div class="join-mini hidden" id="mini"><span>Quét để vào chơi</span><img alt="Mã QR vào chơi"></div>
+    <span id="dot" class="dot off" title="Kết nối"></span>
+  </header>
+  <main class="s-body" id="main"></main>
+</div>
+<script src="/static/common.js?v=1"></script>
+<script>
+"use strict";
+const { h, live, secondsLeft, SHAPES, LETTERS } = PA;
+const main = document.getElementById("main"), mini = document.getElementById("mini"), dot = document.getElementById("dot");
+const joinUrl = location.origin + "/";
+const qrSrc = "/qr.svg?u=" + encodeURIComponent(joinUrl);
+mini.querySelector("img").src = qrSrc;
+let S = null, rollTimer = null, lastWinnerKey = "";
+
+for (let i = 0; i < 26; i++) {
+  const f = h("i", { style: { left: Math.random() * 100 + "vw", fontSize: (0.6 + Math.random() * 1.2) + "vw",
+    animationDuration: (14 + Math.random() * 16) + "s", animationDelay: (-Math.random() * 30) + "s" } }, "❄");
+  document.getElementById("snow").append(f);
+}
+
+live("/ws?role=screen", {
+  status: (s) => dot.classList.toggle("off", s !== "online"),
+  message: (m) => { if (m.t === "state") { S = m; render(); } }
+});
+
+const fmt = (n) => Number(n || 0).toLocaleString("vi-VN");
+
+function render() {
+  mini.classList.toggle("hidden", S.mode === "lobby");
+  if (S.mode !== "draw" || !S.draw || S.draw.phase !== "rolling") { clearInterval(rollTimer); rollTimer = null; }
+  const v = S.mode === "quiz" && S.quiz ? quizView(S.quiz)
+          : S.mode === "vote" && S.vote ? voteView(S.vote)
+          : S.mode === "draw" && S.draw ? drawView(S.draw)
+          : lobbyView();
+  main.replaceChildren(v);
+}
+
+function lobbyView() {
+  return h("div", { class: "lobby" },
+    h("div", { class: "qrbox" }, h("img", { src: qrSrc, alt: "Mã QR vào chơi" }), h("div", { class: "url" }, joinUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""))),
+    h("div", null,
+      h("div", { style: { fontSize: "2vw", color: "var(--muted)", fontWeight: 600 } }, "Quét mã, nhập tên, chọn nhóm"),
+      h("div", { class: "count" }, fmt(S.players), h("small", null, "người đã vào")),
+      h("div", { class: "gtiles" }, S.groups.map(g => h("div", { class: "gtile", style: { borderTopColor: g.color } },
+        h("b", null, g.count), h("span", null, g.name)))),
+      h("div", { class: "recent" }, S.recent.map(p => h("span", null, p.name)))));
+}
+
+function optionsGrid(q, mode) {
+  const counts = q.result ? q.result.counts : (q.live_counts || []);
+  const total = Math.max(1, counts.reduce((a, b) => a + b, 0));
+  return h("div", { class: "sq-opts" }, q.opts.map((o, i) => {
+    let cls = `sopt o${i}`;
+    if (mode === "reveal") cls += i === q.ans ? " right" : " dim";
+    return h("div", { class: cls },
+      h("span", { class: "sh", "aria-hidden": "true" }, SHAPES[i]), h("span", null, o),
+      mode !== "open" ? h("span", { class: "n" }, counts[i] || 0) : null,
+      mode !== "open" ? h("i", { class: "bar", style: { width: ((counts[i] || 0) / total * 100) + "%" } }) : null);
+  }));
+}
+
+function quizView(q) {
+  const bell = q.kind === "bell";
+  const title = bell ? "Rung chuông vàng" : "Đố vui có thưởng";
+  if (q.phase === "ready") {
+    return h("div", { class: "bell-big" },
+      h("div", { style: { fontSize: "7vw" } }, bell ? "🔔" : "🧠"),
+      h("div", { class: "sq-q" }, title),
+      h("p", { style: { fontSize: "2vw", color: "var(--muted)", maxWidth: "60vw", margin: "1.5vw auto" } },
+        bell ? "Trả lời sai hoặc không kịp là dừng cuộc chơi. Người trụ lại cuối cùng thắng."
+             : "Trả lời đúng, càng nhanh càng nhiều điểm. Điểm cá nhân cộng vào thành tích của nhóm."),
+      h("div", { style: { fontSize: "2vw", color: "var(--gold)", fontWeight: 700 } },
+        bell ? `${fmt(q.alive)} người tham gia` : `${fmt(S.players)} người · ${q.total} câu hỏi`));
+  }
+  if (q.phase === "board" || q.phase === "end") return bell ? bellBoard(q) : scoreBoard(q);
+  const headRow = h("div", { class: "sq-head" },
+    h("span", null, `${title} · Câu ${q.idx + 1}/${q.total}`),
+    bell ? h("span", null, `Còn ${fmt(q.alive)} người`) : null,
+    q.phase === "open" ? h("span", { class: "tbig", "data-left": q.left_ms, "data-at": S._at }, secondsLeft(q.left_ms, S._at)) : null);
+  const parts = [headRow, h("h2", { class: "sq-q" }, q.q), optionsGrid(q, q.phase === "reveal" ? "reveal" : (q.phase === "open" ? "open" : "closed"))];
+  if (q.phase === "open") {
+    parts.push(h("div", null, h("div", { class: "progress" }, h("i", { style: { width: (q.answered / Math.max(1, q.eligible_online || q.eligible) * 100) + "%" } })),
+      h("div", { style: { marginTop: ".6vw", fontSize: "1.5vw", color: "var(--muted)" } }, `${fmt(q.answered)} người đã trả lời`)));
+  } else if (q.phase === "closed") {
+    parts.push(h("div", { class: "verdict" }, "Hết giờ! Đáp án là…"));
+  } else if (q.phase === "reveal" && q.result) {
+    const r = q.result;
+    let text = `${fmt(r.right)}/${fmt(r.total)} người trả lời đúng.`;
+    if (bell) text = r.saved_all ? "Không ai đúng, tất cả được cứu!" : `${fmt(r.out)} người dừng lại · còn ${fmt(q.alive)} người.`;
+    parts.push(h("div", { class: "verdict" }, text));
+  }
+  return h("div", { class: "sq", style: { gridTemplateRows: "auto auto auto 1fr" } }, parts);
+}
+
+function scoreBoard(q) {
+  const top = q.top || [], groups = q.groups || [];
+  const maxAvg = Math.max(1, ...groups.map(g => g.avg));
+  return h("div", { class: "board" },
+    h("section", null, h("h2", null, q.phase === "end" ? "🏆 Chung cuộc · cá nhân" : "Cá nhân dẫn đầu"),
+      h("div", { class: "rows" }, top.map((p, i) => h("div", { class: "row" + (i === 0 ? " first" : "") },
+        h("span", { class: "pos" }, i + 1), h("span", { class: "nm" }, p.name, h("small", null, p.group)), h("span", { class: "sc" }, fmt(p.score)))))),
+    h("section", null, h("h2", null, q.phase === "end" ? "🏆 Chung cuộc · nhóm (điểm TB/người)" : "Nhóm (điểm trung bình mỗi người)"),
+      h("div", { class: "rows" }, groups.slice(0, 14).map((g, i) => h("div", { class: "row gbar" + (i === 0 ? " first" : ""), style: { fontSize: "1.15vw", padding: ".3vw 1.2vw" } },
+        h("i", { class: "fill", style: { width: (g.avg / maxAvg * 100) + "%", background: g.color } }),
+        h("span", { class: "pos" }, i + 1), h("span", { class: "nm" }, g.name, h("small", null, g.members + " người")), h("span", { class: "sc" }, fmt(g.avg)))))));
+}
+
+function bellBoard(q) {
+  return h("div", { class: "bell-big" },
+    h("div", { style: { fontSize: "2.4vw", color: "var(--muted)", fontWeight: 600 } }, q.phase === "end" ? "🔔 Người trụ lại cuối cùng" : "Còn trong cuộc"),
+    h("div", { class: "count" }, fmt(q.alive)),
+    q.alive_names ? h("div", { class: "names" }, q.alive_names.map(n => h("span", null, n))) : null);
+}
+
+function voteView(v) {
+  const counts = v.counts || [], max = Math.max(1, ...counts);
+  return h("div", { class: "sq", style: { gridTemplateRows: "auto auto 1fr" } },
+    h("div", { class: "sq-head" }, h("span", null, v.open ? "Đang bình chọn trên điện thoại" : "Đã chốt kết quả"), h("span", { class: "tbig", style: { fontSize: "2.4vw" } }, fmt(v.total) + " phiếu")),
+    h("h2", { class: "sq-q" }, v.title),
+    h("div", { class: "vote-s" }, v.opts.map((o, i) => {
+      const g = S.groups.find(x => x.code === o.group);
+      const lead = !v.open && counts[i] === max && max > 0;
+      return h("div", { class: "vrow", style: v.opts.length > 10 ? { fontSize: "1.25vw" } : null },
+        h("span", null, (lead ? "🏆 " : "") + o.label),
+        h("span", { class: "track", style: v.opts.length > 10 ? { height: "1.8vw" } : null }, h("i", { style: { width: (counts[i] / max * 100) + "%", background: g ? g.color : "var(--gold)" } })),
+        h("span", { class: "n" }, counts[i] || 0));
+    })));
+}
+
+function drawView(d) {
+  const reel = h("div", { class: "reel" });
+  if (d.phase === "rolling") {
+    reel.classList.add("rolling");
+    const names = d.names && d.names.length ? d.names : ["…"];
+    let i = 0;
+    reel.textContent = names[0];
+    clearInterval(rollTimer);
+    rollTimer = setInterval(() => { i = (i + 1) % names.length; reel.textContent = names[i]; }, 70);
+  } else if (d.phase === "done" && d.last) {
+    reel.classList.add("won");
+    reel.append(h("div", null, "🎉 " + d.last.name), h("div", { style: { fontSize: "2.4vw", color: "var(--muted)", marginTop: ".6vw" } }, d.last.group));
+  } else {
+    reel.textContent = "Sẵn sàng quay";
+  }
+  return h("div", { class: "draw-s" },
+    h("div", { class: "prize" }, d.prize ? "🎁 " + d.prize : "🎁 Quay số trúng thưởng"),
+    reel,
+    h("div", { style: { fontSize: "1.5vw", color: "var(--muted)", marginBottom: "1vw" } }, `${fmt(d.pool)} người trong vòng quay`),
+    d.winners.length ? h("div", { class: "wlist" }, d.winners.map(w => h("span", null, w.absent ? h("s", null, w.name) : w.name, w.prize ? " · " + w.prize : ""))) : null);
+}
+
+setInterval(() => {
+  document.querySelectorAll(".tbig[data-left]").forEach(el => { el.textContent = secondsLeft(+el.dataset.left, +el.dataset.at); });
+}, 200);
+</script>
+</body>
+</html>
