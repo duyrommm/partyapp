@@ -30,6 +30,7 @@
     st.analyser.connect(ctx.destination);
     st.music = ctx.createGain(); st.music.gain.value = 1.0; st.music.connect(st.master);
     st.fx = ctx.createGain(); st.fx.gain.value = 1.0; st.fx.connect(st.master);
+    loadClips(ctx);
     const len = ctx.sampleRate * 1.5;
     st.noise = ctx.createBuffer(1, len, ctx.sampleRate);
     const data = st.noise.getChannelData(0);
@@ -38,6 +39,26 @@
   }
 
   const hz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+  // static/sfx/bite.mp3 (tiếng cạp) và static/sfx/santa.mp3 (Ho ho ho Merry Christmas): có thì dùng
+  const clips = {};
+  function loadClips(ctx) {
+    [["bite", "/static/sfx/bite.mp3"], ["santa", "/static/sfx/santa.mp3"]].forEach(([k, url]) => {
+      fetch(url, { cache: "no-cache" })
+        .then(r => (r.ok ? r.arrayBuffer() : Promise.reject()))
+        .then(b => new Promise((ok, no) => ctx.decodeAudioData(b, ok, no)))
+        .then(buf => { clips[k] = buf; log("clip:" + k); })
+        .catch(() => {});
+    });
+  }
+  function playClip(k, t, rate = 1, gain = 1) {
+    const buf = clips[k];
+    if (!buf) return false;
+    const src = st.ctx.createBufferSource(), g = st.ctx.createGain();
+    src.buffer = buf; src.playbackRate.value = rate; g.gain.value = gain;
+    src.connect(g); g.connect(st.fx); src.start(t);
+    return true;
+  }
 
   function tone(t, freq, dur, o = {}) {
     const ctx = st.ctx, osc = ctx.createOscillator(), g = ctx.createGain();
@@ -104,6 +125,17 @@
     [n(69),2],[n(69),2],[n(69),2],[n(69),2],[n(67),6],[n(65),2], [n(64),4],[n(62),4],[n(60),8]]);
   const DECK_CH = "CCGC CCGC GCDG CCFC".replace(/ /g, "").split("");
 
+  // We Wish You a Merry Christmas (dân gian Anh – phạm vi công cộng), nhịp 3/4, Sol trưởng
+  const W = { D: 62, E: 64, Fs: 66, G: 67, A: 69, B: 71, C: 72 };
+  const WISH = seq([
+    [W.G,4],[W.G,2],[W.A,2],[W.G,2],[W.Fs,2], [W.E,4],[W.E,4],[W.E,4],
+    [W.A,4],[W.A,2],[W.B,2],[W.A,2],[W.G,2], [W.Fs,4],[W.D,4],[W.D,4],
+    [W.B,4],[W.B,2],[W.C,2],[W.B,2],[W.A,2], [W.G,4],[W.E,4],[W.D,2],[W.D,2],
+    [W.E,4],[W.A,4],[W.Fs,4], [W.G,8],[W.D,4]]);
+  const WISH_CH = ["G", "C", "A", "D", "B", "Em", "C", "G"];
+  const WTRI = { G: [55, 59, 62], C: [60, 64, 67], A: [57, 61, 64], D: [57, 62, 66], B: [59, 63, 66], Em: [55, 59, 64] };
+  const WROOT = { G: 43, C: 36, A: 45, D: 38, B: 47, Em: 40 };
+
   // ── nhạc nền: bước 1/16, vòng 4 ô nhịp = 64 bước ──
   const _ = null;
   const TRACKS = {
@@ -138,18 +170,19 @@
         }
       }
     },
-    // Đố vui: nhịp đập hồi hộp, tiếng đồng hồ
+    // Đố vui / Rung chuông vàng: We Wish You a Merry Christmas, điệu valse vui tươi
     quiz: {
-      bpm: 120,
-      roots: [33, 33, 29, 31],
-      pads: [[57, 60, 64], [57, 60, 64], [53, 57, 60], [55, 59, 62]],
+      bpm: 168,
       play(s, t, sd) {
-        const bar = (s >> 4) & 3, b = s & 15;
-        if (b % 2 === 0) tone(t, hz(this.roots[bar]), sd * 1.4, { type: "triangle", gain: 0.17 });
-        if (b % 4 === 0) hiss(t, 0.03, { freq: b % 8 === 0 ? 5000 : 3000, gain: 0.07 });
-        if (b === 0) this.pads[bar].forEach(m => tone(t, hz(m), sd * 15, { type: "sine", gain: 0.025, attack: 0.3 }));
-        if (bar === 3 && b % 2 === 0) tone(t, hz(69 + b), sd * 1.5, { type: "sine", gain: 0.04 });
-        if (b === 0 || b === 10) kick(t, 0.22);
+        const len = WISH.length, i = s % len, bar = Math.floor(i / 12), b = i % 12, ch = WISH_CH[bar];
+        if (b === 0) tone(t, hz(WROOT[ch]), sd * 3.5, { type: "triangle", gain: 0.22 });
+        if (b === 4 || b === 8) WTRI[ch].forEach(m => tone(t, hz(m), sd * 1.6, { type: "square", gain: 0.02 }));
+        if (b % 2 === 0) jingle(t, b === 0 ? 0.045 : 0.028);
+        const note = WISH[i];
+        if (note) {
+          tone(t, hz(note[0] + 12), sd * note[1] * 0.9, { type: "triangle", gain: 0.11 });
+          tone(t, hz(note[0] + 24), sd * Math.min(note[1], 4) * 0.7, { type: "sine", gain: 0.035 });
+        }
       }
     },
     // Công bố kết quả bình chọn: trống dồn
@@ -158,6 +191,7 @@
       play(s, t, sd) {
         const b = s & 31;
         hiss(t, 0.06, { filter: "bandpass", freq: 1800, q: 0.8, gain: 0.04 + 0.08 * (b / 31) });
+        jingle(t, 0.02 + 0.035 * (b / 31));
         if (b === 0 || b === 16) tone(t, 70, 0.5, { type: "sine", gain: 0.3, slideTo: 50 });
       }
     }
@@ -188,6 +222,7 @@
   const SFX = {
     // "cạp cạp": hai miếng cắn giòn, mỗi miếng có tiếng răng va và tiếng bánh vỡ vụn
     chomp(t) {
+      if (playClip("bite", t, 0.94 + Math.random() * 0.14, 0.65)) return;
       const p = 0.9 + Math.random() * 0.2;
       [0, 0.17].forEach((d, k) => {
         const tt = t + d;
@@ -200,6 +235,7 @@
     // tiếng cười "hô hô hô" giọng trầm của ông già Noel (tổng hợp giọng nói bằng bộ lọc âm vị "ô")
     hohoho(t) {
       jingle(t, 0.08, st.fx); jingle(t + 0.12, 0.07, st.fx); jingle(t + 0.24, 0.06, st.fx);
+      if (playClip("santa", t + 0.3, 1, 0.6)) return;
       const ctx = st.ctx;
       [[0.35, 0.3, 150, 118], [0.8, 0.3, 140, 110], [1.25, 0.55, 132, 92]].forEach(([d, dur, f0, f1]) => {
         const at = t + d;
@@ -270,5 +306,5 @@
     return Math.sqrt(sum / buf.length);
   }
 
-  window.Sound = { music, sfx, set, unlock, level, unlocked: () => !!(st.ctx && st.ctx.state === "running"), current: () => st.track };
+  window.Sound = { music, sfx, set, unlock, level, clips: () => Object.keys(clips), unlocked: () => !!(st.ctx && st.ctx.state === "running"), current: () => st.track };
 })();

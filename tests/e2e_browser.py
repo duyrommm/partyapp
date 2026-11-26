@@ -403,6 +403,27 @@ def main():
                 check(f"Trang {nm} không bị tràn ngang", w[1] <= w[0], w)
             w = scr.evaluate("[innerWidth, innerHeight, document.documentElement.scrollWidth, document.documentElement.scrollHeight]")
             check("Màn hình lớn vừa khung 1920x1080, không cuộn", w[2] <= w[0] and w[3] <= w[1], w)
+            # file âm thanh thật (static/sfx): có thì phát file thay tiếng tổng hợp
+            sfx_dir = ROOT / "static" / "sfx"
+            made = []
+            for name, freq in (("bite", 2500), ("santa", 180)):
+                f = sfx_dir / f"{name}.mp3"
+                if not f.exists():
+                    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"sine=frequency={freq}:duration=0.6",
+                                    "-b:a", "96k", str(f)], check=True)
+                    made.append(f)
+            try:
+                pg2 = scr_ctx.new_page()
+                pg2.goto(B + "/screen")
+                pg2.click("#snd")
+                pg2.wait_for_function("Sound.clips().length === 2", timeout=8000)
+                pg2.evaluate("Sound.sfx('chomp')")
+                lv = max(pg2.evaluate("Sound.level()") for _ in range(8) if not pg2.wait_for_timeout(50))
+                check("Có file tiếng cạp / Santa thì app nạp và phát file đó", lv > 0.005, lv)
+                pg2.close()
+            finally:
+                for f in made:
+                    f.unlink()
             br.close()
     finally:
         srv.terminate()
