@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=1">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 <div class="mc">
@@ -21,7 +21,7 @@
   <div class="err" id="err" role="alert"></div>
   <div id="panel"></div>
 </div>
-<script src="/static/common.js?v=1"></script>
+<script src="/static/common.js?v=3"></script>
 <script>
 "use strict";
 const { h, live, secondsLeft, armed, LETTERS } = PA;
@@ -74,7 +74,7 @@ function kept(key, def) { return key in keep ? keep[key] : def; }
 function render() {
   if (!S) return;
   const active = document.activeElement;
-  if (active && active.dataset && active.dataset.keep && (active.tagName === "TEXTAREA" || active.type === "text")) {
+  if (active && ((active.dataset && active.dataset.keep && (active.tagName === "TEXTAREA" || active.type === "text")) || active.type === "range")) {
     // đang gõ: chỉ cập nhật phần tóm tắt, không vẽ lại ô nhập
     renderSummary();
     return;
@@ -101,11 +101,23 @@ function showOnScreen(mode, label) {
   return S.mode === mode ? null : button(label || "Đưa lên màn hình lớn", { a: "mode", mode }, { ghost: true });
 }
 
+function soundCard() {
+  const snd = S.sound || { on: true, vol: 70 };
+  const vol = h("input", { type: "range", min: 0, max: 100, step: 5, value: snd.vol, "aria-label": "Âm lượng", style: { width: "100%" } });
+  vol.addEventListener("change", () => act({ a: "sound", vol: +vol.value }));
+  return h("div", { class: "card" }, h("h2", null, "Âm thanh màn hình lớn"),
+    h("p", { class: "muted" }, "Nhạc nền và hiệu ứng phát trên máy nối màn hình lớn (cần bấm một lần vào màn hình lớn để trình duyệt cho phát âm thanh)."),
+    h("div", { class: "grid2" },
+      button(snd.on ? "🔊 Đang bật · bấm để tắt" : "🔇 Đang tắt · bấm để bật", { a: "sound", on: !snd.on }, { ghost: !snd.on }),
+      h("div", null, h("div", { class: "muted" }, `Âm lượng: ${snd.vol}%`), vol)));
+}
+
 function lobbyPanel() {
   const byGroup = {};
   S.roster.forEach(r => (byGroup[r.group] = byGroup[r.group] || []).push(r));
   return [
     h("div", { class: "card" }, h("h2", null, "Màn hình chờ"), h("p", { class: "muted" }, "Hiện mã QR to để mọi người quét vào chơi."), showOnScreen("lobby", "Hiện mã QR lên màn hình lớn") || h("p", { class: "ok" }, "Màn hình lớn đang hiện mã QR.")),
+    soundCard(),
     h("div", { class: "card" }, h("h2", null, `Người chơi (${S.players})`),
       S.groups.filter(g => g.count).map(g => h("details", null, h("summary", null, `${g.name} · ${g.count}`),
         (byGroup[g.code] || []).map(r => {
@@ -117,6 +129,19 @@ function lobbyPanel() {
   ];
 }
 
+function quizStartControls(kind, name, confirm, label) {
+  const total = (S.qsets[kind] || []).length;
+  const count = h("input", { type: "text", inputmode: "numeric", "data-keep": "qcount_" + kind, value: kept("qcount_" + kind, ""),
+    placeholder: `Số câu sẽ chơi (để trống = tất cả ${total} câu)`, maxlength: 3 });
+  const shuffle = h("input", { type: "checkbox", "data-keep": "qshuf_" + kind, checked: kept("qshuf_" + kind, true) });
+  return [
+    h("p", { class: "muted" }, `Bộ câu hỏi ${name}: ${total} câu (sửa ở tab “Câu hỏi”).`),
+    count,
+    h("label", { class: "chk" }, shuffle, "Lấy câu hỏi ngẫu nhiên (xáo trộn thứ tự)"),
+    button(label || "Bắt đầu " + name, () => { saveInputs(); return { a: "quiz_start", kind, count: count.value.trim() || null, shuffle: shuffle.checked }; }, { confirm })
+  ];
+}
+
 function quizPanel(kind) {
   const q = S.quiz && S.quiz.kind === kind ? S.quiz : null;
   const other = S.quiz && S.quiz.kind !== kind && S.mode === "quiz";
@@ -125,10 +150,10 @@ function quizPanel(kind) {
     return h("div", { class: "card" }, h("h2", null, name),
       h("p", { class: "muted" }, kind === "bell" ? "Sai hoặc không kịp là bị loại. Nếu cả lượt không ai đúng thì giữ lại tất cả (không loại ai). Người vào sau khi câu 1 mở chỉ được xem."
                                                 : "Đúng được 500–1000 điểm tuỳ tốc độ. Bảng nhóm tính điểm trung bình mỗi người, nhóm đông hay ít đều công bằng."),
-      h("p", { class: "muted" }, `${S.questions.length} câu hỏi đang có (sửa ở tab “Câu hỏi”).`),
-      button("Bắt đầu " + name, { a: "quiz_start", kind }, { confirm: other }));
+      ...quizStartControls(kind, name, other));
   }
-  const cur = q.idx >= 0 ? S.questions[q.idx] : null, next = S.questions[q.idx + 1];
+  const qs = S.quiz_qs || [];
+  const cur = q.idx >= 0 ? qs[q.idx] : null, next = qs[q.idx + 1];
   const phaseText = { ready: "Chưa mở câu nào", open: "Đang nhận câu trả lời", closed: "Đã đóng, chờ công bố", reveal: "Đã công bố đáp án", board: "Đang hiện bảng xếp hạng", end: "Đã kết thúc" }[q.phase];
   const btns = [];
   const champion = kind === "bell" && q.alive === 1 && q.idx >= 0;
@@ -138,7 +163,7 @@ function quizPanel(kind) {
   if (q.phase === "reveal") btns.push(button(kind === "bell" ? "Xem số người còn lại" : "Bảng xếp hạng", { a: "quiz_board", qseq: q.qseq }, { ghost: !!next }));
   if (!["open", "end"].includes(q.phase)) btns.push(button("Kết thúc, xem chung cuộc", { a: "quiz_end" }, { ghost: !champion, confirm: !!next && !champion }));
   if (kind === "bell" && q.phase !== "open") btns.push(button("Hồi sinh tất cả", { a: "bell_revive" }, { ghost: true, confirm: true }));
-  if (q.phase === "end") btns.push(button("Chơi lại từ đầu", { a: "quiz_start", kind }, { confirm: true }));
+  const restart = q.phase === "end" ? quizStartControls(kind, name, false, "Chơi lại (lấy câu hỏi ngẫu nhiên mới)") : null;
   const counts = q.live_counts || [];
   return [
     h("div", { class: "card" },
@@ -157,6 +182,7 @@ function quizPanel(kind) {
         ` · ${q.answered}/${q.eligible_online} người online đã trả lời`) : null,
       h("div", { class: "gap" }),
       h("div", { style: { display: "grid", gap: "8px" } }, btns),
+      restart ? h("div", { style: { marginTop: "12px" } }, restart) : null,
       S.mode !== "quiz" ? h("div", { style: { marginTop: "8px" } }, showOnScreen("quiz")) : null),
     next && q.phase !== "end" ? h("div", { class: "card" }, h("h2", null, `Câu tiếp theo (${q.idx + 2})`), h("div", { class: "muted" }, next.q)) : null,
     kind === "score" && q.top && q.top.length ? h("div", { class: "card" }, h("h2", null, "Top cá nhân"), q.top.slice(0, 5).map((p, i) => h("div", { class: "line" }, h("span", null, `${i + 1}. ${p.name} · ${p.group}`), h("b", null, p.score.toLocaleString("vi-VN"))))) : null
@@ -169,9 +195,13 @@ function votePanel() {
   if (v) {
     const counts = v.counts || [];
     cards.push(h("div", { class: "card" }, h("h2", null, (v.open ? "Đang mở: " : "Đã đóng: ") + v.title + ` · ${v.total} phiếu`),
+      v.open ? h("p", { class: "ok" }, "Tự đóng sau ", h("span", { class: "timer", "data-left": v.left_ms, "data-at": S._at }, secondsLeft(v.left_ms, S._at) + " giây"),
+                 " rồi màn hình lớn công bố lần lượt.")
+             : h("p", { class: "ok" }, v.revealed ? "Màn hình lớn đã công bố xong, điện thoại đã thấy kết quả." : "Màn hình lớn đang công bố lần lượt…"),
+      h("p", { class: "muted" }, "Số phiếu thật (chỉ MC thấy):"),
       v.opts.map((o, i) => h("div", { class: "line" }, h("span", null, o.label), h("b", null, counts[i] || 0))),
       h("div", { class: "gap" }),
-      v.open ? button("Đóng bình chọn, chốt kết quả", { a: "vote_close", id: v.id }) : null,
+      v.open ? button("Đóng sớm và công bố", { a: "vote_close", id: v.id }, { confirm: true }) : null,
       S.mode !== "vote" ? h("div", { style: { marginTop: "8px" } }, showOnScreen("vote")) : null));
   }
   const title = h("input", { type: "text", "data-keep": "vtitle", value: kept("vtitle", ""), placeholder: "Câu hỏi bình chọn", maxlength: 80 });
@@ -179,6 +209,7 @@ function votePanel() {
   opts.value = kept("vopts", "");
   const groupsMode = h("input", { type: "checkbox", "data-keep": "vgroups", checked: kept("vgroups", true) });
   const noSelf = h("input", { type: "checkbox", "data-keep": "vnoself", checked: kept("vnoself", true) });
+  const secs = h("input", { type: "text", inputmode: "numeric", "data-keep": "vsecs", value: kept("vsecs", "60"), maxlength: 3, style: { width: "90px" } });
   const sync = () => { opts.disabled = groupsMode.checked; noSelf.disabled = !groupsMode.checked; };
   groupsMode.addEventListener("change", sync); sync();
   const presets = h("div", { class: "grid2" }, Object.entries(S.presets).map(([k, t]) => h("button", { class: "small", type: "button",
@@ -187,11 +218,12 @@ function votePanel() {
     h("label", { class: "chk" }, groupsMode, "Lựa chọn là 14 nhóm"),
     h("label", { class: "chk" }, noSelf, "Không cho bầu nhóm của mình"),
     opts, h("div", { class: "gap" }),
+    h("label", { class: "chk" }, "Thời gian bình chọn", secs, "giây (10–900)"),
     button("Mở bình chọn", () => {
       saveInputs();
       const list = groupsMode.checked ? S.groups.map(g => ({ label: g.name, group: g.code }))
         : opts.value.split("\n").map(s => s.trim()).filter(Boolean).map(label => ({ label }));
-      return { a: "vote_start", title: title.value, opts: list, no_self: groupsMode.checked && noSelf.checked };
+      return { a: "vote_start", title: title.value, opts: list, no_self: groupsMode.checked && noSelf.checked, secs: parseInt(secs.value, 10) || 0 };
     }, { confirm: !!(v && v.open) })));
   return cards;
 }
@@ -199,34 +231,60 @@ function votePanel() {
 function drawPanel() {
   const d = S.draw;
   const prize = h("input", { type: "text", "data-keep": "prize", value: kept("prize", ""), placeholder: "Tên giải, ví dụ: Giải Ba – Tai nghe", maxlength: 60 });
-  const onlyOnline = h("input", { type: "checkbox", "data-keep": "online", checked: kept("online", true) });
-  const roll = button(d.phase === "rolling" ? "Đang quay…" : "Quay!", () => { saveInputs(); return { a: "draw_roll", prize: prize.value, seq: d.seq, only_online: onlyOnline.checked }; }, { disabled: d.phase === "rolling" });
+  const list = h("textarea", { "data-keep": "dnames", placeholder: "Mỗi dòng một tên. Ví dụ:\nAnh Tuấn – Sales AW\nChị Mai – Accounting", style: { minHeight: "180px", fontFamily: "inherit", fontSize: "15px" } });
+  list.value = kept("dnames", "");
+  const count = h("span", { class: "muted" });
+  const names = () => list.value.split("\n").map(s => s.trim()).filter(Boolean);
+  const recount = () => { count.textContent = `${names().length} tên`; };
+  list.addEventListener("input", recount); recount();
+  const fill = (onlyOnline) => {
+    const rows = S.roster.filter(r => !onlyOnline || r.online).map(r => `${r.name} (${(S.groups.find(g => g.code === r.group) || {}).name || ""})`);
+    list.value = rows.join("\n"); recount(); saveInputs();
+  };
+  const exclude = h("input", { type: "checkbox", "data-keep": "dexcl", checked: kept("dexcl", true) });
+  const rolling = d.phase === "rolling";
+  const roll = button(rolling ? "Zombie đang ăn…" : "🧟 Cho zombie ăn!",
+    () => { saveInputs(); return { a: "draw_roll", prize: prize.value, seq: d.seq, names: names(), exclude_winners: exclude.checked }; },
+    { disabled: rolling });
   const last = d.winners.length ? d.winners[d.winners.length - 1] : null;
   return [
-    h("div", { class: "card" }, h("h2", null, `Quay số · ${d.pool} người trong vòng quay`),
-      prize, h("label", { class: "chk" }, onlyOnline, "Chỉ quay người đang mở app (đang có mặt)"), roll,
+    h("div", { class: "card" }, h("h2", null, "Zombie ăn bánh quy · quay số trúng thưởng"),
+      h("p", { class: "muted" }, "Mỗi tên là một chiếc bánh quy gừng. Zombie ăn dần ngẫu nhiên; chiếc bánh còn lại cuối cùng trúng thưởng."),
+      prize, h("div", { class: "gap" }),
+      h("div", { class: "grid2" },
+        h("button", { class: "small", type: "button", onclick: () => fill(true) }, "Lấy người đang online"),
+        h("button", { class: "small", type: "button", onclick: () => fill(false) }, "Lấy tất cả đã check-in")),
+      h("div", { class: "gap" }), list,
+      h("div", { class: "line", style: { borderBottom: 0 } }, count,
+        h("label", { class: "chk", style: { margin: 0 } }, exclude, "Bỏ người đã trúng")),
+      roll,
       last && d.phase === "done" && !last.absent ? h("div", { style: { marginTop: "8px" } }, button(`${last.name} vắng mặt, huỷ kết quả`, { a: "draw_absent", seq: d.seq }, { ghost: true, confirm: true })) : null,
       S.mode !== "draw" ? h("div", { style: { marginTop: "8px" } }, showOnScreen("draw")) : null),
     d.winners.length ? h("div", { class: "card" }, h("h2", null, "Đã trúng"), d.winners.slice().reverse().map(w => h("div", { class: "line" },
-      h("span", null, w.absent ? h("s", null, w.name) : w.name, " · ", w.group), h("span", { class: "muted" }, w.absent ? "vắng" : (w.prize || ""))))) : null
+      h("span", null, w.absent ? h("s", null, w.name) : w.name), h("span", { class: "muted" }, w.absent ? "vắng" : (w.prize || ""))))) : null
   ];
 }
 
+function questionEditor(kind, name) {
+  const qs = S.qsets[kind] || [];
+  const ta = h("textarea", { "data-keep": "qtext_" + kind, style: { minHeight: "220px" } });
+  ta.value = kept("qtext_" + kind, qs.map(q => [q.q, ...q.opts, LETTERS[q.ans], q.time].join("\t")).join("\n"));
+  return h("div", { class: "card" }, h("h2", null, `${name} (${qs.length} câu)`),
+    ta, h("div", { class: "gap" }),
+    button("Lưu bộ câu hỏi " + name, () => { saveInputs(); return { a: "questions", set: kind, text: ta.value }; }),
+    h("div", { class: "gap" }),
+    h("button", { class: "btn ghost", type: "button", onclick: () => { delete keep["qtext_" + kind]; render(); } }, "Bỏ thay đổi, tải lại từ máy chủ"));
+}
+
 function setupPanel() {
-  const ta = h("textarea", { "data-keep": "qtext", style: { minHeight: "260px" } });
-  ta.value = kept("qtext", S.questions.map(q => [q.q, ...q.opts, LETTERS[q.ans], q.time].join("\t")).join("\n"));
   const reset = h("button", { class: "btn danger", type: "button" }, "Xoá hết người chơi và điểm (bắt đầu lại)");
   armed(reset, reset.textContent, () => act({ a: "reset" }, reset));
-  const msg = h("p", { class: "ok" });
   return [
-    h("div", { class: "card" }, h("h2", null, `Câu hỏi (${S.questions.length})`),
-      h("p", { class: "muted" }, "Soạn trên Google Sheet theo cột: Câu hỏi | A | B | C | D | Đáp án (A/B/C/D) | Số giây (không bắt buộc). Bôi đen các dòng, Ctrl+C rồi dán vào đây. Câu chỉ có 2–3 lựa chọn thì để trống cột thừa."),
-      ta, h("div", { class: "gap" }),
-      button("Lưu câu hỏi", () => { saveInputs(); return { a: "questions", text: ta.value }; }),
-      h("div", { class: "gap" }),
-      h("button", { class: "btn ghost", type: "button", onclick: () => { delete keep.qtext; render(); } }, "Bỏ thay đổi, tải lại từ máy chủ"),
-      msg),
-    h("div", { class: "card" }, h("h2", null, "Bắt đầu lại"), h("p", { class: "muted" }, "Dùng sau buổi demo trước khi vào tiệc thật. Câu hỏi được giữ lại."), reset)
+    h("div", { class: "card" }, h("h2", null, "Cách soạn câu hỏi"),
+      h("p", { class: "muted" }, "Mỗi trò có bộ câu hỏi riêng. Soạn trên Google Sheet theo cột: Câu hỏi | A | B | C | D | Đáp án (A/B/C/D) | Số giây (không bắt buộc). Bôi đen các dòng, Ctrl+C rồi dán vào ô của trò tương ứng. Câu chỉ có 2–3 lựa chọn thì để trống cột thừa. Khi bắt đầu trò, câu hỏi được lấy ngẫu nhiên từ bộ này.")),
+    questionEditor("score", "Đố vui"),
+    questionEditor("bell", "Rung chuông vàng"),
+    h("div", { class: "card" }, h("h2", null, "Bắt đầu lại"), h("p", { class: "muted" }, "Dùng sau buổi thử trước khi vào tiệc thật. Câu hỏi và cài đặt âm thanh được giữ lại."), reset)
   ];
 }
 

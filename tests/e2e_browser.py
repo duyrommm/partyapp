@@ -41,18 +41,25 @@ def main():
             scr_ctx = br.new_context(viewport={"width": 1920, "height": 1080})
             scr_ctx.add_init_script("window.__PA_KEEPALIVE_MS = 1000")
             scr = scr_ctx.new_page()
+            js_errors = []
+            scr.on("pageerror", lambda e: js_errors.append(("màn hình lớn", str(e))))
             health_calls = []
             scr.on("request", lambda r: health_calls.append(r.url) if r.url.endswith("/health") else None)
             scr.goto(B + "/screen")
             scr.wait_for_selector(".qrbox img")
             check("Màn hình lớn hiện mã QR", scr.locator(".qrbox img").evaluate("i => i.complete && i.naturalWidth > 0"))
             check("Có nút toàn màn hình cho máy chiếu", scr.locator("#fs").is_visible())
+            check("Màn hình lớn nhắc bấm để bật âm thanh", scr.locator("#snd").is_visible())
+            scr.click("#snd")
+            scr.wait_for_timeout(500)
+            check("Bấm một lần là bật được âm thanh, nút nhắc tự ẩn", scr.evaluate("Sound.unlocked()") and not scr.locator("#snd").is_visible())
             scr.wait_for_timeout(2500)
             check("Màn hình lớn tự gọi máy chủ định kỳ để giữ app thức", len(health_calls) >= 2, len(health_calls))
 
             # MC
             mc_ctx = br.new_context(**iphone)
             mc = mc_ctx.new_page()
+            mc.on("pageerror", lambda e: js_errors.append(("MC", str(e))))
             mc.goto(B + "/mc?key=k")
             mc.wait_for_selector("#tabs button")
             check("MC vào được bằng link có mã", "Sảnh chờ" in mc.content())
@@ -64,6 +71,7 @@ def main():
                 ctx.add_init_script("""Object.defineProperty(navigator, 'wakeLock', { value: { request: () => {
                     window.__wl = (window.__wl || 0) + 1; return Promise.resolve({ released: false, release(){}, addEventListener(){} }); } } });""")
                 pg = ctx.new_page()
+                pg.on("pageerror", lambda e: js_errors.append(("điện thoại", str(e))))
                 pg.goto(B)
                 if i == 0:
                     pg.click("button:has-text('Vào chơi')")
@@ -102,12 +110,17 @@ def main():
 
             # đố vui
             mc.click("#tabs button:has-text('Đố vui')")
+            check("MC chọn được số câu và lấy ngẫu nhiên", mc.locator("input[data-keep=qcount_score]").is_visible()
+                  and mc.locator("input[data-keep=qshuf_score]").is_checked())
+            mc.uncheck("input[data-keep=qshuf_score]")          # giữ thứ tự để kịch bản test biết đáp án
             mc.click("button:has-text('Bắt đầu Đố vui')")
             mc.wait_for_selector("button:has-text('Mở câu 1')")
             mc.click("button:has-text('Mở câu 1')")
             for _, pg in phones:
                 pg.wait_for_selector(".ans")
             scr.wait_for_selector(".sq-q")
+            scr.wait_for_timeout(400)
+            check("Đang trả lời: màn hình lớn phát nhạc nền đố vui", scr.evaluate("Sound.current()") == "quiz")
             scr.screenshot(path=str(SHOTS / "04_screen_question.png"))
             p0 = phones[0][1]
             p0.screenshot(path=str(SHOTS / "05_phone_question.png"))
@@ -140,6 +153,9 @@ def main():
             scr.wait_for_timeout(400)
             scr.screenshot(path=str(SHOTS / "06_screen_reveal.png"))
             p0.wait_for_selector(".result")
+            scr.wait_for_timeout(300)
+            log = scr.evaluate("window.__soundLog.slice()")
+            check("Công bố đáp án: tắt nhạc nền, phát chuông", "sfx:ding" in log and scr.evaluate("Sound.current()") is None, log[-6:])
             check("Màn hình lớn vinh danh người đúng nhanh nhất", "Nhanh nhất" in scr.inner_text("body") and "Duy Nguyễn" in scr.locator(".fastest").inner_text())
             check("Trả lời đúng thì báo Chính xác và cộng điểm", "Chính xác" in p0.inner_text("body") and "+" in p0.locator(".gain").inner_text())
             phones[2][1].wait_for_selector(".result.bad")
@@ -158,6 +174,7 @@ def main():
 
             # rung chuông vàng
             mc.click("#tabs button:has-text('Rung chuông')")
+            mc.uncheck("input[data-keep=qshuf_bell]")
             b = mc.locator("#panel .btn").first
             check("Nút bắt đầu Rung chuông vàng có mặt", "Bắt đầu Rung chuông vàng" in b.inner_text(), b.inner_text())
             b.click()
@@ -218,11 +235,13 @@ def main():
             check("Rung chuông vàng: trang MC không hiện bảng điểm cá nhân", "Top cá nhân" not in mc.inner_text("body"))
             mc.screenshot(path=str(SHOTS / "11d_mc_champion.png"), full_page=True)
 
-            # bình chọn
+            # bình chọn: số ảo chạy + đếm ngược, hết giờ tự đóng rồi công bố lần lượt
             mc.click("#tabs button:has-text('Bình chọn')")
             mc.click("button:has-text('Nhóm có trang phục Noel đẹp nhất')")
+            mc.fill("input[data-keep=vsecs]", "15")
             mc.click("button:has-text('Mở bình chọn')")
             p0.wait_for_selector(".vopt")
+            check("Điện thoại thấy đồng hồ đếm ngược bình chọn", p0.locator(".timer").count() == 1)
             own = p0.locator(".vopt:has-text('IT + Legal')")
             check("Không bầu được cho nhóm mình", own.is_disabled())
             p0.locator(".vopt:has-text('CN Hà Nội')").click()
@@ -231,44 +250,119 @@ def main():
             p0.wait_for_timeout(500)
             check("Đổi ý bình chọn được", "Sales AW" in p0.locator(".vopt[aria-pressed=true]").inner_text())
             phones[1][1].locator(".vopt:has-text('Sales AW')").click()
-            scr.wait_for_timeout(600)
+            scr.wait_for_selector(".vbox")
+            n1 = scr.evaluate("[...document.querySelectorAll('.vrow .n')].map(e => e.textContent).join(',')")
+            scr.wait_for_timeout(400)
+            n2 = scr.evaluate("[...document.querySelectorAll('.vrow .n')].map(e => e.textContent).join(',')")
+            check("Đang mở: màn hình lớn chạy số ảo liên tục", n1 != n2 and scr.locator(".vrow.fake").count() == 14)
+            check("Đang mở: có đồng hồ đếm ngược và nhạc nền bình chọn", scr.locator(".tbig").count() == 1 and scr.evaluate("Sound.current()") == "vote")
+            lv = max(scr.evaluate("Sound.level()") for _ in range(10) if not scr.wait_for_timeout(80))
+            check("Nhạc nền thật sự phát ra loa (đo được âm lượng)", lv > 0.005, lv)
+            check("Đang mở: màn hình lớn không lộ kết quả thật", "🏆" not in scr.inner_text("body"))
+            low = scr.evaluate("Math.max(...[...document.querySelectorAll('.vrow')].map(r => r.getBoundingClientRect().bottom))")
+            check("Đang mở: 14 nhóm kèm đồng hồ vẫn nằm gọn trong màn hình", low <= 1080, low)
             scr.screenshot(path=str(SHOTS / "12_screen_vote.png"))
             p0.screenshot(path=str(SHOTS / "13_phone_vote.png"), full_page=True)
-            mc.click("button:has-text('Đóng bình chọn')")
-            scr.wait_for_selector("text=Đã chốt kết quả")
-            scr.wait_for_timeout(300)
-            check("Đóng bình chọn: Sales AW dẫn đầu 2 phiếu", "🏆 Sales AW" in scr.inner_text("body"))
+            scr.wait_for_selector("text=Đang công bố kết quả", timeout=20000)
+            scr.wait_for_timeout(300)                      # bộ điều phối âm thanh cập nhật 10 lần/giây
+            check("Hết giờ: tự đóng và chuyển sang trống công bố", scr.evaluate("Sound.current()") == "drum")
+            p0.wait_for_selector("text=Đang công bố kết quả trên màn hình lớn")
+            check("Đang công bố: điện thoại chưa thấy kết quả", "Dẫn đầu" not in p0.inner_text("body"))
+            scr.wait_for_timeout(4500)
+            mid_real = scr.locator(".vrow:not(.fake)").count()
+            check("Công bố lần lượt: một phần đã hiện, phần còn lại vẫn chạy số ảo", 0 < mid_real < 14, mid_real)
+            scr.screenshot(path=str(SHOTS / "12b_screen_vote_revealing.png"))
+            scr.wait_for_selector("text=Kết quả bình chọn", timeout=30000)
+            scr.wait_for_timeout(500)
+            check("Công bố xong: Sales AW thắng với 2 phiếu, hiện sau cùng", "🏆 Sales AW" in scr.inner_text("body")
+                  and scr.locator(".vrow.vwin .n").inner_text() == "2")
+            log = scr.evaluate("window.__soundLog.slice()")
+            check("Công bố có tiếng từng lựa chọn và kèn chiến thắng", log.count("sfx:pop") >= 10 and "sfx:fanfare" in log, (log.count("sfx:pop"), log[-4:]))
+            low = scr.evaluate("Math.max(...[...document.querySelectorAll('.vrow')].map(r => r.getBoundingClientRect().bottom))")
+            check("Kết quả bình chọn nằm gọn trong màn hình", low <= 1080, low)
+            scr.screenshot(path=str(SHOTS / "12c_screen_vote_result.png"))
+            p0.wait_for_selector("text=Dẫn đầu: Sales AW", timeout=8000)
+            check("Công bố xong: điện thoại mới thấy kết quả", True)
 
-            # quay số
+            # quay số: zombie ăn bánh quy
             mc.click("#tabs button:has-text('Quay số')")
             mc.fill("input[data-keep=prize]", "Giải Ba – Tai nghe")
-            mc.click("button:has-text('Quay!')")
-            scr.wait_for_selector(".reel.rolling")
+            mc.click("button:has-text('Lấy tất cả đã check-in')")
+            n_names = len([x for x in mc.locator("textarea[data-keep=dnames]").input_value().split("\n") if x.strip()])
+            check("Lấy danh sách người đã check-in vào ô tên", n_names == 28, n_names)
+            mc.click("button:has-text('Cho zombie ăn!')")
+            scr.wait_for_selector(".zstage .zc")
+            check("Màn hình lớn bày đủ bánh quy theo danh sách", scr.locator(".zc").count() == 28, scr.locator(".zc").count())
+            scr.wait_for_timeout(300)
+            cut = scr.evaluate("[...document.querySelectorAll('.zn')].filter(e => e.scrollHeight > e.clientHeight + 1).length")
+            check("Với 28 người, tên trên bánh hiện đủ, không bị cắt", cut == 0, cut)
+            scr.wait_for_timeout(2500)
+            t1 = scr.locator(".zombie").evaluate("e => e.style.transform")
             scr.wait_for_timeout(700)
-            scr.screenshot(path=str(SHOTS / "14_screen_rolling.png"))
-            scr.wait_for_selector(".reel.won", timeout=10000)
-            scr.wait_for_timeout(700)
+            t2 = scr.locator(".zombie").evaluate("e => e.style.transform")
+            check("Zombie di chuyển trên màn hình", t1 != t2 and "translate" in t1, (t1, t2))
+            tops = []
+            for _ in range(12):
+                tops.append(scr.evaluate("document.querySelector('.zombie').getBoundingClientRect().top - document.querySelector('.zstage').getBoundingClientRect().top"))
+                scr.wait_for_timeout(250)
+            check("Zombie không bị cắt ở mép trên khung", min(tops) >= -1, min(tops))
+            scr.wait_for_timeout(2500)
+            scr.screenshot(path=str(SHOTS / "14_screen_zombie.png"))
+            eaten_before = scr.locator(".zc.eaten").count()
+            check("Zombie ăn dần các bánh", eaten_before >= 2, eaten_before)
+            check("Quay số có nhạc nền và tiếng nhai bánh", scr.evaluate("Sound.current()") == "draw"
+                  and scr.evaluate("window.__soundLog.filter(x => x === 'sfx:chomp').length") >= 2)
+            p0.wait_for_selector("text=Zombie đang ăn bánh quy")
+            check("Điện thoại báo zombie đang ăn, chưa lộ kết quả", "Chúc mừng" not in p0.inner_text("body"))
+            # mở lại màn hình lớn giữa chừng: hoạt cảnh chạy tiếp đúng chỗ, không bắt đầu lại
+            scr.reload()
+            scr.wait_for_selector(".zstage .zc")
+            scr.wait_for_timeout(600)
+            eaten_after = scr.locator(".zc.eaten").count()
+            check("Tải lại màn hình lớn giữa chừng vẫn đúng tiến độ", eaten_after >= eaten_before, (eaten_before, eaten_after))
+            scr.wait_for_selector(".zwin", timeout=60000)
+            scr.wait_for_timeout(900)
             scr.screenshot(path=str(SHOTS / "15_screen_winner.png"))
-            winner_name = scr.locator(".reel.won div").first.inner_text().replace("🎉", "").strip()
-            won = [pg for _, pg in phones if pg.locator("text=Bạn trúng thưởng").count()]
-            check("Đúng 1 điện thoại báo trúng, khớp tên trên màn hình", len(won) == 1 and winner_name in won[0].locator("#me").inner_text(), winner_name)
+            check("Chỉ còn đúng 1 chiếc bánh chưa bị ăn", scr.locator(".zc:not(.eaten)").count() == 1)
+            win_cookie = scr.locator(".zc.win .zn").inner_text()
+            win_banner = scr.locator(".zwin-name").inner_text().replace("🎉", "").strip()
+            check("Tên trên bảng công bố khớp chiếc bánh còn lại", win_cookie == win_banner, (win_cookie, win_banner))
+            check("Bảng công bố ghi tên giải", "Giải Ba – Tai nghe" in scr.locator(".zwin").inner_text())
+            check("Công bố người trúng có kèn chiến thắng", scr.evaluate("window.__soundLog.slice(-3)").count("sfx:fanfare") >= 1)
+            phones[0][1].wait_for_timeout(800)
+            won = [pg for _, pg in phones if pg.locator("text=Bánh của bạn sống sót").count()]
+            others_ok = all(("Chúc mừng " + win_banner) in pg.inner_text("body") for _, pg in phones if pg not in won)
+            mine = [pg for _, pg in phones if win_banner.startswith(pg.locator("#me").inner_text().strip() + " (")]
+            check("Điện thoại người trúng báo trúng, máy khác báo tên người trúng", len(won) == len(mine) and others_ok, (len(won), len(mine), win_banner))
             if won:
                 won[0].screenshot(path=str(SHOTS / "16_phone_win.png"))
             mc.screenshot(path=str(SHOTS / "17_mc_draw.png"), full_page=True)
+            check("Trang MC ghi người vừa trúng", win_banner in mc.locator(".card").nth(1).inner_text())
 
-            for nm, pg in [("điện thoại", p0), ("MC", mc), ("màn hình lớn", scr)]:
-                check(f"Trang {nm} không có chữ lỗi [object …] / undefined / NaN",
-                      not re.search(r"\[object|undefined|NaN", pg.inner_text("body")))
+            # danh sách tự nhập, 150 tên: vừa màn hình, chữ không quá nhỏ
+            big = "\n".join(f"Nguyễn Văn Khách mời số {i:03d}" for i in range(150))
+            mc.fill("textarea[data-keep=dnames]", big)
+            mc.click("button:has-text('Cho zombie ăn!')")
+            scr.wait_for_function("document.querySelectorAll('.zc').length === 150")
+            scr.wait_for_timeout(2500)
+            box = scr.evaluate("""() => { const g = document.querySelector('.zstage').getBoundingClientRect();
+                const cs = [...document.querySelectorAll('.zc')].map(c => c.getBoundingClientRect());
+                const f = parseFloat(getComputedStyle(document.querySelector('.zn')).fontSize);
+                return { inside: cs.every(r => r.bottom <= g.bottom + 1 && r.right <= g.right + 1), font: f, bottom: g.bottom }; }""")
+            check("150 bánh vẫn nằm gọn trong màn hình, chữ đọc được", box["inside"] and box["font"] >= 10 and box["bottom"] <= 1080, box)
+            scr.screenshot(path=str(SHOTS / "14b_screen_zombie_150.png"))
+
             # câu hỏi dài không tràn màn hình lớn; kết thúc có vinh danh nhóm vô địch
             long_q = ("Trong năm 2026, phòng ban nào của công ty đã tổ chức nhiều buổi đào tạo nội bộ nhất "
                       "cho nhân viên mới, kéo dài từ tháng Một cho đến tận tháng Mười Hai và có đông người tham dự nhất?")
             opts = ["Phòng Kinh doanh khu vực miền Nam mở rộng", "Phòng Kế toán và Kiểm soát nội bộ tập đoàn",
                     "Phòng Công nghệ thông tin và Pháp chế", "Chi nhánh Hà Nội cùng Chi nhánh Đà Nẵng"]
             r = mc.evaluate("""async (t) => (await fetch('/api/mc', {method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({a:'questions', text:t})})).status""", "\t".join([long_q, *opts, "C", "20"]) + "\nCâu ngắn\tA\tB\tA")
+                body: JSON.stringify({a:'questions', set:'score', text:t})})).status""", "\t".join([long_q, *opts, "C", "20"]) + "\nCâu ngắn\tA\tB\tA")
             check("Lưu bộ câu hỏi mới khi không có trò đang chạy", r == 200, r)
             mc.click("#tabs button:has-text('Đố vui')")
-            mc.click("button:has-text('Chơi lại từ đầu'), button:has-text('Bắt đầu Đố vui')")
+            mc.uncheck("input[data-keep=qshuf_score]")
+            mc.click("button:has-text('Bắt đầu Đố vui')")
             if mc.locator("button[data-armed]").count():
                 mc.locator("button[data-armed]").click()
             mc.wait_for_selector("button:has-text('Mở câu 1')")
@@ -293,6 +387,16 @@ def main():
             check("Bảng chung cuộc (14 nhóm + top 10) nằm gọn trong màn hình", low <= 1080, low)
             scr.screenshot(path=str(SHOTS / "19_screen_final.png"))
 
+            mc.click("#tabs button:has-text('Câu hỏi')")
+            check("Tab Câu hỏi có 2 bộ riêng cho Đố vui và Rung chuông vàng",
+                  mc.locator("textarea[data-keep=qtext_score]").count() == 1 and mc.locator("textarea[data-keep=qtext_bell]").count() == 1)
+            mc.click("#tabs button:has-text('Sảnh chờ')")
+            mc.click("button:has-text('Đang bật · bấm để tắt')")
+            scr.wait_for_timeout(600)
+            check("MC tắt âm thanh từ điện thoại, màn hình lớn nhận ngay", scr.evaluate("S.sound.on") is False)
+            mc.click("button:has-text('Đang tắt · bấm để bật')")
+
+            check("Không có lỗi JavaScript nào trên cả 3 trang trong suốt lượt test", not js_errors, js_errors[:3])
             # không có thanh cuộn ngang ở mọi trang
             for nm, pg in [("điện thoại", p0), ("MC", mc)]:
                 w = pg.evaluate("[innerWidth, document.documentElement.scrollWidth]")

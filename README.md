@@ -20,8 +20,14 @@ Trò chơi tập thể trên điện thoại cho tiệc 100–200 người: Đ�
 
 Luôn chạy **1 worker**: trạng thái trò chơi nằm trong bộ nhớ của một tiến trình.
 
+## Âm thanh
+Nhạc nền và hiệu ứng được tổng hợp ngay trên trình duyệt của màn hình lớn (giai điệu tự soạn, không dùng file nhạc).
+Mở `/screen`, **bấm một lần vào trang** (nút "Bấm để bật âm thanh" hoặc "Toàn màn hình") để trình duyệt cho phát tiếng.
+MC bật/tắt và chỉnh âm lượng ở tab **Sảnh chờ**. Điện thoại người chơi không phát âm thanh.
+
 ## Soạn câu hỏi
-Google Sheet theo cột: `Câu hỏi | A | B | C | D | Đáp án (A/B/C/D) | Số giây`. Bôi đen, Ctrl+C, dán vào tab **Câu hỏi** trên trang MC.
+Đố vui và Rung chuông vàng có **bộ câu hỏi riêng**. Google Sheet theo cột: `Câu hỏi | A | B | C | D | Đáp án (A/B/C/D) | Số giây`.
+Bôi đen, Ctrl+C, dán vào ô của trò tương ứng ở tab **Câu hỏi** trên trang MC. Khi bắt đầu trò, câu hỏi được lấy ngẫu nhiên; MC chọn số câu sẽ chơi.
 
 ## Kiểm thử
 ```

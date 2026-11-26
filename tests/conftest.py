@@ -21,6 +21,7 @@ MC = {"x-mc-key": "k"}
 def clock(monkeypatch):
     off = [0.0]
     monkeypatch.setattr(A, "mono", lambda: time.monotonic() + off[0])
+    monkeypatch.setattr(A, "wall", lambda: time.time() + off[0])
     return off
 
 

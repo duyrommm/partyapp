@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=1">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 <div class="phone">
@@ -19,7 +19,7 @@
   </div>
   <main id="main" class="p-main" aria-live="polite"></main>
 </div>
-<script src="/static/common.js?v=1"></script>
+<script src="/static/common.js?v=3"></script>
 <script>
 "use strict";
 const { h, live, secondsLeft, SHAPES, LETTERS } = PA;
@@ -203,12 +203,18 @@ function bellStat(q, me) {
 }
 
 function voteView(v, me) {
+  if (!v.open && !v.revealed) {
+    return [h("div", { class: "big-emoji center" }, "🥁"), ...head("Đã hết giờ bình chọn!", "Đang công bố kết quả trên màn hình lớn…"),
+      me.vote !== null && me.vote !== undefined ? h("p", { class: "p-sub center" }, "Bạn đã bầu: " + v.opts[me.vote].label) : null];
+  }
   if (!v.open) {
     const max = Math.max(1, ...(v.counts || [0]));
     const best = (v.counts || []).map((n, i) => n === max && n > 0 ? v.opts[i].label : null).filter(Boolean);
     return [h("div", { class: "big-emoji center" }, "🗳️"), ...head("Đã đóng bình chọn", best.length ? "Dẫn đầu: " + best.join(", ") : "Xem kết quả trên màn hình lớn nhé.")];
   }
-  return [...head(v.title, v.no_self ? "Chọn 1 lựa chọn. Không bầu cho nhóm mình. Bạn đổi ý được cho tới khi MC đóng." : "Chọn 1 lựa chọn. Bạn đổi ý được cho tới khi MC đóng."),
+  const t = h("span", { class: "timer", "data-left": v.left_ms, "data-at": S._at }, secondsLeft(v.left_ms, S._at) + " giây");
+  return [h("div", { style: { display: "flex", justifyContent: "space-between" } }, h("span", { class: "p-sub" }, "Bình chọn"), t),
+    ...head(v.title, v.no_self ? "Chọn 1 lựa chọn. Không bầu cho nhóm mình. Bạn đổi ý được cho tới khi MC đóng." : "Chọn 1 lựa chọn. Bạn đổi ý được cho tới khi MC đóng."),
     h("div", { class: "vlist" }, v.opts.map((o, i) => {
       const self = v.no_self && o.group === me.group;
       return h("button", { class: "vopt", "aria-pressed": String(me.vote === i), disabled: self,
@@ -219,12 +225,13 @@ function voteView(v, me) {
 }
 
 function drawView(d, me) {
-  if (me.won_now) return h("div", { class: "win" }, h("div", { class: "big-emoji" }, "🎁"), h("h2", null, "Bạn trúng thưởng!"),
-    h("p", null, d.prize || "Mời bạn lên sân khấu nhận quà"), h("p", null, "Mời bạn lên sân khấu nhé!"));
-  if (d.phase === "rolling") return [h("div", { class: "big-emoji center" }, "🎰"), ...head("Đang quay số…", d.prize ? "Giải: " + d.prize : "Nhìn lên màn hình lớn nhé!")];
-  if (d.phase === "done" && d.last) return [h("div", { class: "big-emoji center" }, "🎉"), ...head("Chúc mừng " + d.last.name, (d.last.group ? d.last.group + " · " : "") + (d.prize || "")),
+  if (me.won_now) return h("div", { class: "win" }, h("div", { class: "big-emoji" }, "🍪"), h("h2", null, "Bánh của bạn sống sót!"),
+    h("p", null, d.prize ? "Bạn trúng: " + d.prize : "Bạn trúng thưởng!"), h("p", null, "Mời bạn lên sân khấu nhận quà nhé!"));
+  if (d.phase === "rolling") return [h("div", { class: "big-emoji center" }, "🧟"), ...head("Zombie đang ăn bánh quy…",
+    (d.prize ? "Giải: " + d.prize + ". " : "") + "Nhìn lên màn hình lớn xem bánh của ai còn lại cuối cùng!")];
+  if (d.phase === "done" && d.last) return [h("div", { class: "big-emoji center" }, "🎉"), ...head("Chúc mừng " + d.last.name, d.prize ? "trúng " + d.prize : "trúng thưởng!"),
     me.won ? h("p", { class: "p-sub center" }, "Bạn đã trúng: " + me.won) : null];
-  return [h("div", { class: "big-emoji center" }, "🎁"), ...head("Quay số trúng thưởng", "Giữ điện thoại mở để có tên trong vòng quay nhé!")];
+  return [h("div", { class: "big-emoji center" }, "🍪"), ...head("Zombie ăn bánh quy", "Mỗi người là một chiếc bánh quy. Chiếc còn lại cuối cùng trúng thưởng. Hãy nhìn lên màn hình lớn!")];
 }
 
 // cập nhật đồng hồ đếm ngược mà không vẽ lại cả trang

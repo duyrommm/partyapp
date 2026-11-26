@@ -40,7 +40,6 @@ MAX_PLAYERS = int(os.environ.get("MAX_PLAYERS", "400"))
 BROADCAST_EVERY = 0.15      # giây: gom thay đổi rồi mới gửi
 KEEPALIVE_EVERY = 15        # giây
 GRACE = 0.8                 # giây: bù độ trễ mạng khi hết giờ
-ROLL_SECS = 4.5             # giây quay số trên màn hình
 
 GROUPS = [
     ("sales-aw", "Sales AW", "#E4572E"),
@@ -86,10 +85,11 @@ def new_state():
         "players": {},          # pid -> {name, group, token, joined, key}
         "tokens": {},           # token -> pid
         "mode": "lobby",        # lobby | quiz | vote | draw
-        "questions": [dict(q) for q in SAMPLE_QUESTIONS],
+        "qsets": {"score": [dict(q) for q in SAMPLE_QUESTIONS], "bell": [dict(q) for q in SAMPLE_QUESTIONS]},
+        "sound": {"on": True, "vol": 70},
         "quiz": None,
         "vote": None,
-        "draw": {"phase": "idle", "prize": "", "winners": [], "seq": 0, "only_online": True},
+        "draw": {"phase": "idle", "prize": "", "winners": [], "seq": 0},
         "seq": 0,               # bộ đếm chung cho các phiên quiz/vote
     }
 
@@ -102,6 +102,10 @@ RT = {"dirty": True, "last_send": 0.0, "last_ka": 0.0, "save_at": None, "saving"
 
 def mono():
     return time.monotonic()
+
+
+def wall():
+    return time.time()
 
 
 def touch(save=True):
@@ -176,15 +180,23 @@ def load_sync():
         log.info("Chưa có trạng thái cũ, bắt đầu mới")
         return
     data = json.loads(text)
+    if "questions" in data and "qsets" not in data:     # dữ liệu từ bản trước: một bộ câu hỏi chung
+        data["qsets"] = {"score": data["questions"], "bell": data["questions"]}
+    old_questions = data.pop("questions", None)
     S.clear()
     S.update(new_state())
     S.update(data)
+    if S.get("quiz") and "qs" not in S["quiz"]:
+        S["quiz"]["qs"] = old_questions or S["qsets"][S["quiz"].get("kind", "score")]
     q = S.get("quiz")
     if q and q.get("phase") == "open":       # máy chủ khởi động lại giữa câu hỏi: đóng câu đó
         q["phase"] = "closed"
     d = S["draw"]
     if d.get("phase") == "rolling":            # đang quay dở: chốt luôn người đã chọn
         finish_roll()
+    v = S.get("vote")
+    if v and v.get("open") and "ends_at" not in v:
+        v["ends_at"] = wall() + 30
     log.info("Đã nạp trạng thái: %d người chơi, chế độ %s", len(S["players"]), S["mode"])
 
 
@@ -254,13 +266,24 @@ def remove_player(pid):
 
 # ───────────────────────────── quiz / rung chuông vàng ─────────────────────────────
 
-def quiz_start(kind):
+def quiz_start(kind, count=None, shuffle=True):
     if kind not in ("score", "bell"):
         raise GameError("Sai loại trò chơi.")
-    if not S["questions"]:
-        raise GameError("Chưa có câu hỏi nào.")
+    pool = [dict(q) for q in S["qsets"].get(kind, [])]
+    if not pool:
+        raise GameError("Chưa có câu hỏi nào cho trò này (vào tab Câu hỏi để thêm).")
+    if shuffle:
+        secrets.SystemRandom().shuffle(pool)
+    if count not in (None, "", 0):
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            raise GameError("Số câu không hợp lệ.")
+        if count < 1:
+            raise GameError("Số câu phải từ 1 trở lên.")
+        pool = pool[:count]
     S["seq"] += 1
-    S["quiz"] = {"kind": kind, "id": S["seq"], "idx": -1, "phase": "ready", "qseq": 0,
+    S["quiz"] = {"kind": kind, "id": S["seq"], "idx": -1, "phase": "ready", "qseq": 0, "qs": pool,
                  "answers": {}, "scores": {}, "ms": {}, "gain": {}, "result": None,
                  "alive": list(S["players"]) if kind == "bell" else [], "started": False}
     S["mode"] = "quiz"
@@ -286,11 +309,11 @@ def quiz_open(expect_idx):
         raise GameError("Câu hiện tại chưa xong.")
     if expect_idx != q["idx"]:
         raise GameError("Đã chuyển câu rồi (bấm trùng).")
-    if q["idx"] + 1 >= len(S["questions"]):
+    if q["idx"] + 1 >= len(q["qs"]):
         raise GameError("Hết câu hỏi rồi. Bấm “Kết thúc” để xem kết quả chung cuộc.")
     if q["kind"] == "bell" and not eligible(q):
         raise GameError("Không còn ai trong cuộc. Bấm “Hồi sinh tất cả” hoặc “Kết thúc”.")
-    qq = S["questions"][q["idx"] + 1]
+    qq = q["qs"][q["idx"] + 1]
     q["idx"] += 1
     q["qseq"] += 1
     q["phase"] = "open"
@@ -316,7 +339,7 @@ def quiz_reveal(qseq):
     q = _quiz()
     if q["qseq"] != qseq or q["phase"] not in ("open", "closed"):
         raise GameError("Đã công bố đáp án rồi.")
-    qq = S["questions"][q["idx"]]
+    qq = q["qs"][q["idx"]]
     limit = int(qq.get("time") or 20) * 1000
     counts = [0] * len(qq["opts"])
     right = []
@@ -382,7 +405,7 @@ def answer(pid, qseq, o):
         return "out"
     if pid in q["answers"]:
         return "dup"
-    qq = S["questions"][q["idx"]]
+    qq = q["qs"][q["idx"]]
     if not isinstance(o, int) or not 0 <= o < len(qq["opts"]):
         return "bad"
     q["answers"][pid] = {"o": o, "ms": int((mono() - q["_open"]) * 1000)}
@@ -420,7 +443,15 @@ def group_board(q):
 
 # ───────────────────────────── bình chọn ─────────────────────────────
 
-def vote_start(title, opts, no_self):
+VOTE_LEAD_MS = 1800       # nghỉ trước khi công bố lựa chọn đầu tiên
+VOTE_TAIL_MS = 2500       # giữ màn hình sau khi công bố người thắng rồi mới cho điện thoại xem
+
+
+def vote_step_ms(n):
+    return int(max(900, min(2200, 16000 / max(1, n))))
+
+
+def vote_start(title, opts, no_self, secs=30):
     title = (title or "").strip()[:80] or "Bình chọn"
     clean = []
     for o in opts:
@@ -431,9 +462,16 @@ def vote_start(title, opts, no_self):
         raise GameError("Cần ít nhất 2 lựa chọn.")
     if len(clean) > 20:
         raise GameError("Tối đa 20 lựa chọn.")
+    try:
+        secs = int(secs)
+    except (TypeError, ValueError):
+        raise GameError("Thời gian bình chọn không hợp lệ.")
+    if not 10 <= secs <= 900:
+        raise GameError("Thời gian bình chọn từ 10 đến 900 giây.")
     S["seq"] += 1
     S["vote"] = {"id": S["seq"], "title": title, "opts": clean, "open": True, "votes": {},
-                 "no_self": bool(no_self) and any(o["group"] for o in clean)}
+                 "no_self": bool(no_self) and any(o["group"] for o in clean),
+                 "secs": secs, "ends_at": wall() + secs, "revealed": False}
     S["mode"] = "vote"
     touch()
 
@@ -453,12 +491,35 @@ def vote_cast(pid, vid, o):
     return "ok"
 
 
+def _vote_finish_open(v):
+    counts = vote_counts(v)
+    v["open"] = False
+    v["closed_at"] = wall()
+    v["final"] = counts
+    # công bố từ thấp đến cao; người thắng (hoặc đồng hạng nhất) công bố sau cùng
+    v["reveal_order"] = sorted(range(len(counts)), key=lambda i: (counts[i], -i))
+    v["step_ms"] = vote_step_ms(len(counts))
+    v["reveal_ms"] = VOTE_LEAD_MS + v["step_ms"] * len(counts) + VOTE_TAIL_MS
+    v["revealed"] = False
+    touch()
+
+
 def vote_close(vid):
     v = S["vote"]
     if not v or v["id"] != vid or not v["open"]:
         raise GameError("Bình chọn đã đóng.")
-    v["open"] = False
-    touch()
+    _vote_finish_open(v)
+
+
+def vote_tick():
+    v = S["vote"]
+    if not v:
+        return
+    if v["open"] and wall() >= v.get("ends_at", float("inf")):
+        _vote_finish_open(v)
+    elif not v["open"] and not v.get("revealed") and wall() >= v.get("closed_at", 0) + v.get("reveal_ms", 0) / 1000:
+        v["revealed"] = True
+        touch()
 
 
 def vote_counts(v):
@@ -469,45 +530,84 @@ def vote_counts(v):
     return c
 
 
-# ───────────────────────────── quay số ─────────────────────────────
+# ───────────────────────────── quay số: zombie ăn bánh quy ─────────────────────────────
+# MC nhập danh sách tên (mỗi tên là một chiếc bánh quy gừng). Máy chủ chọn ngẫu nhiên người trúng
+# và thứ tự zombie ăn các bánh còn lại; màn hình lớn diễn lại theo lịch đó. Bánh còn lại cuối cùng trúng.
 
-def draw_pool():
-    d = S["draw"]
-    taken = {w["pid"] for w in d["winners"]}
-    return [pid for pid in S["players"] if pid not in taken and (is_online(pid) or not d["only_online"])]
+MAX_DRAW_NAMES = 150
 
 
-def draw_roll(prize, expect_seq, only_online=True):
+def draw_schedule(n):
+    """Thời điểm (ms tính từ lúc bắt đầu) zombie ăn từng chiếc bánh; 2 miếng cuối chậm hơn cho hồi hộp."""
+    bites = n - 1
+    total = min(40.0, max(8.0, bites * 1.3))
+    gap = total / (bites + 2)
+    t, times = 1500.0, []
+    for i in range(bites):
+        t += gap * 1000 * (2 if i >= bites - 2 else 1)
+        times.append(int(t))
+    return times, int(t) + 4000          # dừng 4 giây trước khi công bố
+
+
+def draw_roll(prize, expect_seq, names, exclude_winners=True):
     d = S["draw"]
     if d["phase"] == "rolling":
-        raise GameError("Đang quay.")
+        raise GameError("Zombie đang ăn, chờ xong lượt này đã.")
     if expect_seq != d["seq"]:
         raise GameError("Vừa quay xong rồi (bấm trùng).")
-    d["only_online"] = bool(only_online)
-    pool = draw_pool()
-    if not pool:
-        raise GameError("Không còn ai để quay (mọi người đã trúng hoặc không ai online).")
+    if not isinstance(names, list):
+        raise GameError("Danh sách tên không hợp lệ.")
+    won = {w["name"].casefold() for w in d["winners"]} if exclude_winners else set()
+    clean, seen, dups, skipped = [], set(), [], 0
+    for raw in names:
+        n = re.sub(r"\s+", " ", unicodedata.normalize("NFC", str(raw))).strip()[:40]
+        if not n:
+            continue
+        k = n.casefold()
+        if k in won:
+            skipped += 1
+            continue
+        if k in seen:
+            dups.append(n)
+            continue
+        seen.add(k)
+        clean.append(n)
+    if dups:
+        raise GameError("Danh sách bị trùng tên: " + ", ".join(dups[:5]) + ". Thêm họ hoặc tên nhóm để phân biệt.")
+    if len(clean) < 2:
+        raise GameError("Cần ít nhất 2 tên (không tính người đã trúng)." if skipped else "Cần ít nhất 2 tên.")
+    if len(clean) > MAX_DRAW_NAMES:
+        raise GameError(f"Tối đa {MAX_DRAW_NAMES} tên mỗi lượt.")
+    rnd = secrets.SystemRandom()
+    pick = rnd.randrange(len(clean))
+    order = [i for i in range(len(clean)) if i != pick]
+    rnd.shuffle(order)
+    times, total = draw_schedule(len(clean))
     d["seq"] += 1
     d["prize"] = (prize or "").strip()[:60]
     d["phase"] = "rolling"
-    d["pick"] = secrets.choice(pool)     # lưu cả khi máy chủ khởi động lại; không gửi xuống máy nào
-    d["_until"] = mono() + ROLL_SECS
-    sample = list(pool)
-    secrets.SystemRandom().shuffle(sample)
-    d["_names"] = [label(p) for p in sample[:80]]
+    d["names"] = clean
+    d["order"] = order
+    d["times"] = times
+    d["pick"] = pick                 # không gửi xuống điện thoại; màn hình lớn tự suy ra khi diễn xong
+    d["skipped"] = skipped
+    d["_start"] = mono()
+    d["_until"] = mono() + total / 1000
     S["mode"] = "draw"
     touch()
 
 
 def finish_roll():
     d = S["draw"]
-    pid = d.pop("pick", None)
+    pick = d.pop("pick", None)
     d.pop("_until", None)
-    d.pop("_names", None)
+    d.pop("_start", None)
     d["phase"] = "done"
-    if pid and pid in S["players"]:
-        p = S["players"][pid]
-        d["winners"].append({"pid": pid, "name": p["name"], "group": p["group"], "prize": d["prize"], "absent": False})
+    names = d.get("names") or []
+    if isinstance(pick, int) and 0 <= pick < len(names):
+        name = names[pick]
+        pid = next((p for p in S["players"] if label(p).casefold() == name.casefold()), None)
+        d["winners"].append({"pid": pid, "name": name, "prize": d["prize"], "absent": False})
     touch()
 
 
@@ -521,7 +621,7 @@ def draw_absent(seq):
     d = S["draw"]
     if d["seq"] != seq or d["phase"] != "done" or not d["winners"] or d["winners"][-1]["absent"]:
         raise GameError("Không có kết quả để huỷ.")
-    d["winners"][-1]["absent"] = True     # người vắng không quay lại vòng sau
+    d["winners"][-1]["absent"] = True     # vẫn bị loại khỏi lượt sau nếu bật "bỏ người đã trúng"
     touch()
 
 
@@ -584,8 +684,8 @@ def groups_summary():
 def quiz_public(q, for_mc=False):
     if not q:
         return None
-    qq = S["questions"][q["idx"]] if 0 <= q["idx"] < len(S["questions"]) else None
-    out = {"kind": q["kind"], "id": q["id"], "idx": q["idx"], "total": len(S["questions"]), "phase": q["phase"],
+    qq = q["qs"][q["idx"]] if 0 <= q["idx"] < len(q["qs"]) else None
+    out = {"kind": q["kind"], "id": q["id"], "idx": q["idx"], "total": len(q["qs"]), "phase": q["phase"],
            "qseq": q["qseq"], "answered": len(q["answers"]), "eligible": len(eligible(q)),
            "eligible_online": len([p for p in eligible(q) if is_online(p)])}
     if qq:
@@ -615,28 +715,42 @@ def quiz_public(q, for_mc=False):
     return out
 
 
-def vote_public(v, reveal=True):
+def vote_public(v, level="player"):
+    """player: chỉ thấy kết quả khi màn hình lớn đã công bố xong; screen: lịch công bố; mc: thấy số thật."""
     if not v:
         return None
     out = {"id": v["id"], "title": v["title"], "opts": v["opts"], "open": v["open"], "no_self": v["no_self"],
-           "total": len(v["votes"])}
-    if reveal:
-        out["counts"] = vote_counts(v)
+           "total": len(v["votes"]), "revealed": bool(v.get("revealed")), "secs": v.get("secs")}
+    if v["open"]:
+        out["left_ms"] = max(0, int((v.get("ends_at", wall()) - wall()) * 1000))
+    final = v.get("final") or vote_counts(v)
+    if level == "mc":
+        out["counts"] = vote_counts(v) if v["open"] else final
+    elif not v["open"] and (level == "screen" or v.get("revealed")):
+        out["counts"] = final
+    if not v["open"] and level == "screen":
+        out.update(reveal_order=v.get("reveal_order", []), step_ms=v.get("step_ms", 1000), lead_ms=VOTE_LEAD_MS,
+                   since_close_ms=int((wall() - v.get("closed_at", wall())) * 1000))
     return out
 
 
-def draw_public(full_pool=False):
+def draw_public(level="player"):
+    """level: player (không lộ kết quả khi đang quay), mc, screen (có lịch ăn để diễn hoạt cảnh)."""
     d = S["draw"]
-    out = {"phase": d["phase"], "prize": d["prize"], "seq": d["seq"], "only_online": d["only_online"],
-           "winners": [{"name": w["name"], "group": GROUP_NAME.get(w["group"], ""), "prize": w["prize"], "absent": w["absent"]}
-                       for w in d["winners"]],
-           "pool": len(draw_pool())}
+    out = {"phase": d["phase"], "prize": d["prize"], "seq": d["seq"],
+           "winners": [{"name": w["name"], "prize": w["prize"], "absent": w["absent"]} for w in d["winners"]]}
+    names = d.get("names") or []
     if d["phase"] == "rolling":
         out["left_ms"] = max(0, int((d["_until"] - mono()) * 1000))
-        if full_pool:
-            out["names"] = d.get("_names", [])
+        out["count"] = len(names)
+        elapsed = int((mono() - d["_start"]) * 1000)
+        out["eaten"] = sum(1 for t in d.get("times", []) if t <= elapsed)
+        if level == "screen":
+            out.update(names=names, order=d["order"], times=d["times"], elapsed_ms=elapsed)
     if d["phase"] == "done" and d["winners"]:
         out["last"] = out["winners"][-1]
+        if level == "screen":
+            out.update(names=names, order=d.get("order", []))
     return out
 
 
@@ -646,17 +760,21 @@ def screen_view():
             "online": len([p for p in S["players"] if is_online(p)]),
             "groups": groups_summary(), "recent": [{"name": p["name"], "group": p["group"]} for p in recent],
             "quiz": quiz_public(S["quiz"]) if S["mode"] == "quiz" else None,
-            "vote": vote_public(S["vote"]) if S["mode"] == "vote" else None,
-            "draw": draw_public(full_pool=True) if S["mode"] == "draw" else None}
+            "vote": vote_public(S["vote"], "screen") if S["mode"] == "vote" else None,
+            "sound": S["sound"],
+            "draw": draw_public("screen") if S["mode"] == "draw" else None}
 
 
 def mc_view():
     v = screen_view()
     v["role"] = "mc"
     v["quiz"] = quiz_public(S["quiz"], for_mc=True) if S["mode"] == "quiz" else None
-    v["vote"] = vote_public(S["vote"]) if S["mode"] == "vote" else None
-    v["draw"] = draw_public()
-    v["questions"] = [{"q": q["q"], "opts": q["opts"], "ans": q["ans"], "time": q.get("time", 20)} for q in S["questions"]]
+    v["vote"] = vote_public(S["vote"], "mc") if S["mode"] == "vote" else None
+    v["draw"] = draw_public("mc")
+    v["qsets"] = {k: [{"q": q["q"], "opts": q["opts"], "ans": q["ans"], "time": q.get("time", 20)} for q in qs] for k, qs in S["qsets"].items()}
+    if S["quiz"]:
+        v["quiz_qs"] = [{"q": q["q"], "opts": q["opts"], "ans": q["ans"]} for q in S["quiz"]["qs"]]
+    v["sound"] = S["sound"]
     v["roster"] = sorted(({"pid": pid, "name": p["name"], "group": p["group"], "online": is_online(pid)}
                           for pid, p in S["players"].items()), key=lambda r: (r["group"], r["name"].casefold()))
     v["presets"] = VOTE_PRESETS
@@ -667,8 +785,8 @@ def player_common():
     q = S["quiz"] if S["mode"] == "quiz" else None
     common = {"t": "state", "event": EVENT, "mode": S["mode"], "groups": [{"code": c, "name": n, "color": col} for c, n, col in GROUPS]}
     if q:
-        qq = S["questions"][q["idx"]] if 0 <= q["idx"] < len(S["questions"]) else None
-        cq = {"kind": q["kind"], "idx": q["idx"], "total": len(S["questions"]), "phase": q["phase"], "qseq": q["qseq"]}
+        qq = q["qs"][q["idx"]] if 0 <= q["idx"] < len(q["qs"]) else None
+        cq = {"kind": q["kind"], "idx": q["idx"], "total": len(q["qs"]), "phase": q["phase"], "qseq": q["qseq"]}
         if qq and q["phase"] != "ready":
             cq.update(q=qq["q"], opts=qq["opts"])
             if q["phase"] == "open":
@@ -682,7 +800,7 @@ def player_common():
                 cq["out"] = q["result"].get("out", 0)
         common["quiz"] = cq
     if S["mode"] == "vote" and S["vote"]:
-        common["vote"] = vote_public(S["vote"], reveal=not S["vote"]["open"])
+        common["vote"] = vote_public(S["vote"], "player")
     if S["mode"] == "draw":
         common["draw"] = draw_public()
     return common
@@ -795,6 +913,7 @@ async def ticker():
         try:
             quiz_tick()
             draw_tick()
+            vote_tick()
             now = mono()
             if RT["dirty"] and now - RT["last_send"] >= BROADCAST_EVERY:
                 await broadcast()
@@ -898,16 +1017,16 @@ async def api_join(request: Request):
 
 
 MC_ACTIONS = {
-    "quiz_start": lambda b: quiz_start(b.get("kind")),
+    "quiz_start": lambda b: quiz_start(b.get("kind"), b.get("count"), b.get("shuffle", True)),
     "quiz_open": lambda b: quiz_open(int(b.get("idx", -99))),
     "quiz_close": lambda b: quiz_close(int(b.get("qseq", -1))),
     "quiz_reveal": lambda b: quiz_reveal(int(b.get("qseq", -1))),
     "quiz_board": lambda b: quiz_board(int(b.get("qseq", -1))),
     "quiz_end": lambda b: quiz_end(),
     "bell_revive": lambda b: bell_revive(),
-    "vote_start": lambda b: vote_start(b.get("title"), b.get("opts") or [], b.get("no_self")),
+    "vote_start": lambda b: vote_start(b.get("title"), b.get("opts") or [], b.get("no_self"), b.get("secs", 30)),
     "vote_close": lambda b: vote_close(int(b.get("id", -1))),
-    "draw_roll": lambda b: draw_roll(b.get("prize"), int(b.get("seq", -1)), b.get("only_online", True)),
+    "draw_roll": lambda b: draw_roll(b.get("prize"), int(b.get("seq", -1)), b.get("names"), b.get("exclude_winners", True)),
     "draw_absent": lambda b: draw_absent(int(b.get("seq", -1))),
     "remove_player": lambda b: remove_player(b.get("pid")),
 }
@@ -941,16 +1060,25 @@ async def api_mc(request: Request):
                 return JSONResponse({"error": "Chưa lưu. " + "; ".join(errors[:6])}, status_code=400)
             if not qs:
                 raise GameError("Không đọc được câu hỏi nào.")
-            if S["mode"] == "quiz" and S["quiz"] and S["quiz"]["phase"] not in ("end",):
-                raise GameError("Đang chơi hỏi đáp, kết thúc trò rồi mới đổi câu hỏi.")
-            S["questions"] = qs
+            which = body.get("set")
+            if which not in ("score", "bell"):
+                raise GameError("Chọn bộ câu hỏi Đố vui hoặc Rung chuông vàng.")
+            S["qsets"][which] = qs           # trò đang chơi dùng bản sao riêng nên không bị ảnh hưởng
             touch()
             return {"ok": True, "count": len(qs)}
+        elif a == "sound":
+            on = bool(body.get("on", S["sound"]["on"]))
+            try:
+                vol = max(0, min(100, int(body.get("vol", S["sound"]["vol"]))))
+            except (TypeError, ValueError):
+                raise GameError("Âm lượng không hợp lệ.")
+            S["sound"] = {"on": on, "vol": vol}
+            touch()
         elif a == "reset":
-            keep_q = S["questions"]
+            keep_q, keep_sound = S["qsets"], S["sound"]
             S.clear()
             S.update(new_state())
-            S["questions"] = keep_q
+            S["qsets"], S["sound"] = keep_q, keep_sound
             for ws, info in list(CONNS.items()):
                 if info["role"] == "player":
                     info["pid"] = None

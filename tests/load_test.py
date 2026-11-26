@@ -126,8 +126,8 @@ async def run(base, key, n, report):
         check(f"{n} máy vào phòng và kết nối", health["players"] == n and health["conns"] >= n, f"{t_join:.1f}s, {health}")
 
         # ── đố vui ──
-        await mc(a="questions", text="\n".join(f"Câu thử {k}\tA\tB\tC\tD\t{'ABCD'[k % 4]}\t20" for k in range(5)))
-        await mc(a="quiz_start", kind="score")
+        await mc(a="questions", set="score", text="\n".join(f"Câu thử {k}\tA\tB\tC\tD\t{'ABCD'[k % 4]}\t20" for k in range(5)))
+        await mc(a="quiz_start", kind="score", shuffle=False)
         lat_open, lat_ack, lat_reveal = [], [], []
         for k in range(3):
             q_idx = k - 1
@@ -203,16 +203,32 @@ async def run(base, key, n, report):
         res = await asyncio.gather(*[vote(p) for p in phones])
         st, _ = await mc(a="vote_close", id=vid)
         got = await wait_all(phones, f"v{vid}:False")
-        await asyncio.sleep(0.4)
+        early = [p for p in phones if "counts" in p.state["c"]["vote"]]
+        check("Bình chọn: đang công bố thì chưa máy nào thấy kết quả", got and not early, len(early))
+        for _ in range(80):                                   # chờ màn hình lớn công bố xong (~20 giây với 14 nhóm)
+            if all(p.state["c"]["vote"].get("revealed") for p in phones):
+                break
+            await asyncio.sleep(0.5)
         counts = phones[0].state["c"]["vote"].get("counts", [])
-        check(f"Bình chọn: {n} phiếu được đếm đủ", sum(counts) == n and all(r == "ok" for r, _ in res), f"tổng {sum(counts)}")
+        same = all(p.state["c"]["vote"].get("counts") == counts for p in phones)
+        check(f"Bình chọn: {n} phiếu được đếm đủ, mọi máy cùng kết quả sau khi công bố", sum(counts) == n and same and all(r == "ok" for r, _ in res), f"tổng {sum(counts)}")
 
-        # ── quay số ──
-        t_click = time.perf_counter()
-        st, _ = await mc(a="draw_roll", prize="Thử", seq=0, only_online=True)
-        await asyncio.sleep(5.5)
+        # ── quay số: zombie ăn bánh quy (tối đa 150 tên) ──
+        gname = {"sales-aw": "Sales AW", "sales-pgi": "Sales PGI", "admin": "Admin PGI + AW", "ecom": "Ecom AW + PGI",
+                 "store": "Store AW + PGI", "mkt-aw": "MKT AW", "mkt-pgi": "MKT PGI", "accounting": "Accounting AW + PGI",
+                 "warehouse": "Warehouse", "warranty": "Warranty", "car-audio": "Car Audio + Construction",
+                 "it-legal": "IT + Legal", "hn": "CN Hà Nội", "dn": "CN Đà Nẵng"}
+        names = [f"{p.name} ({gname[p.group]})" for p in phones[:150]]
+        st, j = await mc(a="draw_roll", prize="Thử", seq=0, names=names)
+        check("Quay số: MC gửi danh sách 150 tên", st == 200, j)
+        for _ in range(120):
+            await asyncio.sleep(0.5)
+            if all(p.state["c"].get("draw", {}).get("phase") == "done" for p in phones):
+                break
         winners = [p for p in phones if p.state["me"].get("won_now")]
-        check("Quay số: đúng 1 người trúng và chỉ máy đó báo trúng", st == 200 and len(winners) == 1)
+        last = phones[0].state["c"]["draw"].get("last", {}).get("name")
+        check("Quay số: mọi máy thấy cùng người trúng, đúng 1 máy báo trúng",
+              last in names and len(winners) == 1 and f"{winners[0].name} ({gname[winners[0].group]})" == last, last)
 
         for p in phones:
             await p.drop()

@@ -186,6 +186,60 @@ button:disabled { cursor: default; }
 .fastest span { background: var(--pine-2); border-radius: 99px; padding: .4vw 1.1vw; color: var(--snow); font-weight: 600; }
 .champ { text-align: center; font-size: 2.4vw; font-weight: 800; color: var(--gold); margin: -.5vw 0 1.2vw; }
 
+
+/* ── zombie ăn bánh quy ── */
+.zd { display: flex; flex-direction: column; height: 100%; gap: 1vw; min-height: 0; }
+.zhead { display: flex; align-items: baseline; gap: 2vw; }
+.zhead .prize { font-size: 2.4vw; color: var(--gold); font-weight: 800; }
+.zstatus { font-size: 1.7vw; color: var(--muted); font-weight: 600; margin-left: auto; font-variant-numeric: tabular-nums; }
+.zstage {
+  position: relative; flex: 1; min-height: 0; display: grid; gap: .4vw; padding: 1.2vw; border-radius: 2vw; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 40%, #1e4a39 0%, #163a2d 70%), #163a2d;
+  box-shadow: inset 0 0 0 .3vw rgba(233,185,73,.25);
+}
+.zc { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 0; transition: opacity .35s, transform .35s; }
+.zc svg { height: 50%; width: auto; max-width: 90%; flex: none; filter: drop-shadow(0 .25vw .2vw rgba(0,0,0,.35)); }
+.zn { font-weight: 700; font-size: var(--nf, 16px); max-width: 100%; overflow: hidden; text-align: center; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  background: rgba(0,0,0,.35); padding: .1em .5em; border-radius: .6em; margin-top: .25em; line-height: 1.2; }
+.zc.eaten { opacity: 0; transform: scale(.3) rotate(-25deg); }
+.zc.alone svg { animation: glow .8s ease-in-out infinite alternate; }
+.zc.alone .zn { background: var(--gold); color: #2a1d00; }
+@keyframes glow { from { filter: drop-shadow(0 0 .2vw rgba(233,185,73,.4)); transform: scale(1); } to { filter: drop-shadow(0 0 1.4vw rgba(233,185,73,1)); transform: scale(1.12); } }
+.zombie { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; will-change: transform; }
+.zombie svg { width: 100%; height: auto; display: block; transition: transform .15s; }
+.zombie.walk svg { animation: bob .32s ease-in-out infinite alternate; }
+.zombie.chew .z-jaw { animation: chomp .16s ease-in-out infinite alternate; transform-box: fill-box; transform-origin: center; }
+@keyframes bob { from { translate: 0 0; } to { translate: 0 -6%; } }
+@keyframes chomp { from { transform: scaleY(1); } to { transform: scaleY(.25); } }
+.zbubble { position: absolute; top: -14%; left: 50%; transform: translateX(-50%); background: var(--snow); color: var(--pine); font-weight: 800;
+  font-size: clamp(14px, 1.4vw, 28px); padding: .2em .7em; border-radius: 99px; white-space: nowrap; }
+.crumb { position: absolute; width: .7vw; height: .7vw; margin: -.35vw; background: #c27a35; border-radius: 50%; z-index: 2; animation: crumb .7s ease-out forwards; }
+@keyframes crumb { to { transform: translate(var(--dx), var(--dy)) scale(.4); opacity: 0; } }
+.zwin { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1vw;
+  background: rgba(15,43,33,.86); animation: pop .6s cubic-bezier(.2,1.6,.4,1); text-align: center; padding: 2vw; }
+.zwin-cookie svg { height: 26vh; width: auto; filter: drop-shadow(0 0 2vw rgba(233,185,73,.9)); }
+.zwin-name { font-size: 5vw; font-weight: 800; line-height: 1.1; }
+.zwin-prize { font-size: 2.6vw; color: var(--gold); font-weight: 700; }
+.zidle-z { width: 14vw; margin: 0 auto; }
+.zidle-z svg { width: 100%; height: auto; animation: bob 1.2s ease-in-out infinite alternate; }
+
+.snd-btn { border-color: var(--gold); color: var(--gold); animation: blink 1.4s infinite; }
+.vrow { transition: background .3s; border-radius: .6vw; }
+.vrow.fake { opacity: .55; }
+.vrow.fake .track i { transition: width .12s linear; }
+.vrow.just { background: rgba(233,185,73,.16); }
+.vrow.vwin { background: rgba(233,185,73,.22); color: var(--gold); font-weight: 800; }
+.vrow.vwin .n { color: var(--gold); }
+
+.vbox { gap: 1.2vw; }
+.vbox .sq-head .tbig { font-size: 3.6vw; }
+.vbox .sq-q { font-size: 3vw; }
+.vbox.many .vote-s { gap: .35vw; }
+.vbox.many .vrow { font-size: 1.2vw; }
+.vbox.many .vrow .track { height: 1.6vw; }
+.vbox.many .sq-q { font-size: 2.6vw; }
+
 /* ── MC ── */
 .mc { max-width: 760px; margin: 0 auto; padding: 14px 16px 60px; }
 .mc h1 { font-size: 20px; margin: 0; flex: 1; }

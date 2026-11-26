@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=1">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 <div class="snow" id="snow" aria-hidden="true"></div>
@@ -15,12 +15,14 @@
   <header class="s-top">
     <h1>{{EVENT}}</h1>
     <div class="join-mini hidden" id="mini"><span>Quét để vào chơi</span><img alt="Mã QR vào chơi"></div>
+    <button id="snd" class="fs-btn snd-btn" type="button" title="Bật âm thanh">🔇 Bấm để bật âm thanh</button>
     <button id="fs" class="fs-btn" type="button" title="Toàn màn hình">⛶ Toàn màn hình</button>
     <span id="dot" class="dot off" title="Kết nối"></span>
   </header>
   <main class="s-body" id="main"></main>
 </div>
-<script src="/static/common.js?v=1"></script>
+<script src="/static/common.js?v=3"></script>
+<script src="/static/sound.js?v=3"></script>
 <script>
 "use strict";
 const { h, live, secondsLeft, SHAPES, LETTERS } = PA;
@@ -30,6 +32,14 @@ const qrSrc = "/qr.svg?u=" + encodeURIComponent(joinUrl);
 mini.querySelector("img").src = qrSrc;
 let S = null, rollTimer = null, lastWinnerKey = "";
 const fsBtn = document.getElementById("fs");
+const sndBtn = document.getElementById("snd");
+function syncSound() {
+  const want = !S || !S.sound || S.sound.on;
+  sndBtn.classList.toggle("hidden", !want || Sound.unlocked());
+}
+// Trình duyệt chỉ cho phát âm thanh sau một lần bấm: bấm nút này, nút toàn màn hình hay bất kỳ đâu trên trang.
+document.addEventListener("click", () => { Sound.unlock().then(syncSound); }, true);
+document.addEventListener("keydown", () => { Sound.unlock().then(syncSound); }, true);
 fsBtn.addEventListener("click", () => {
   const el = document.documentElement;
   (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
@@ -54,7 +64,9 @@ const fmt = (n) => Number(n || 0).toLocaleString("vi-VN");
 
 function render() {
   mini.classList.toggle("hidden", S.mode === "lobby");
-  if (S.mode !== "draw" || !S.draw || S.draw.phase !== "rolling") { clearInterval(rollTimer); rollTimer = null; }
+  if (S.sound) Sound.set(S.sound.on, S.sound.vol);
+  syncSound();
+  if (S.mode !== "draw") stopStage();
   const v = S.mode === "quiz" && S.quiz ? quizView(S.quiz)
           : S.mode === "vote" && S.vote ? voteView(S.vote)
           : S.mode === "draw" && S.draw ? drawView(S.draw)
@@ -153,42 +165,286 @@ function bellBoard(q) {
     q.alive_names ? h("div", { class: "names" }, q.alive_names.map(n => h("span", null, n))) : null);
 }
 
-function voteView(v) {
-  const counts = v.counts || [], max = Math.max(1, ...counts);
-  return h("div", { class: "sq", style: { gridTemplateRows: "auto auto 1fr" } },
-    h("div", { class: "sq-head" }, h("span", null, v.open ? "Đang bình chọn trên điện thoại" : "Đã chốt kết quả"), h("span", { class: "tbig", style: { fontSize: "2.4vw" } }, fmt(v.total) + " phiếu")),
-    h("h2", { class: "sq-q" }, v.title),
-    h("div", { class: "vote-s" }, v.opts.map((o, i) => {
-      const g = S.groups.find(x => x.code === o.group);
-      const lead = !v.open && counts[i] === max && max > 0;
-      return h("div", { class: "vrow", style: v.opts.length > 10 ? { fontSize: "1.25vw" } : null },
-        h("span", null, (lead ? "🏆 " : "") + o.label),
-        h("span", { class: "track", style: v.opts.length > 10 ? { height: "1.8vw" } : null }, h("i", { style: { width: (counts[i] / max * 100) + "%", background: g ? g.color : "var(--gold)" } })),
-        h("span", { class: "n" }, counts[i] || 0));
-    })));
+// ── Bình chọn: số ảo chạy liên tục khi đang mở; hết giờ công bố lần lượt từ thấp đến cao ──
+function voteRevealed(v) {
+  if (v.open || !v.reveal_order) return 0;
+  const el = performance.now() - S._at + v.since_close_ms;
+  return Math.max(0, Math.min(v.opts.length, Math.floor((el - v.lead_ms) / v.step_ms) + 1));
 }
 
-function drawView(d) {
-  const reel = h("div", { class: "reel" });
-  if (d.phase === "rolling") {
-    reel.classList.add("rolling");
-    const names = d.names && d.names.length ? d.names : ["…"];
-    let i = 0;
-    reel.textContent = names[0];
-    clearInterval(rollTimer);
-    rollTimer = setInterval(() => { i = (i + 1) % names.length; reel.textContent = names[i]; }, 70);
-  } else if (d.phase === "done" && d.last) {
-    reel.classList.add("won");
-    reel.append(h("div", null, "🎉 " + d.last.name), h("div", { style: { fontSize: "2.4vw", color: "var(--muted)", marginTop: ".6vw" } }, d.last.group));
-  } else {
-    reel.textContent = "Sẵn sàng quay";
-  }
-  return h("div", { class: "draw-s" },
-    h("div", { class: "prize" }, d.prize ? "🎁 " + d.prize : "🎁 Quay số trúng thưởng"),
-    reel,
-    h("div", { style: { fontSize: "1.5vw", color: "var(--muted)", marginBottom: "1vw" } }, `${fmt(d.pool)} người trong vòng quay`),
-    d.winners.length ? h("div", { class: "wlist" }, d.winners.map(w => h("span", null, w.absent ? h("s", null, w.name) : w.name, w.prize ? " · " + w.prize : ""))) : null);
+function voteView(v) {
+  const many = v.opts.length > 10;
+  const head = h("div", { class: "sq-head" },
+    h("span", { class: "vstate" }, ""),
+    h("span", { style: { fontSize: "1.6vw" } }, `🗳️ ${fmt(v.total)} phiếu`),
+    v.open ? h("span", { class: "tbig", "data-left": v.left_ms, "data-at": S._at }, secondsLeft(v.left_ms, S._at)) : null);
+  const rows = h("div", { class: "vote-s" }, v.opts.map((o, i) => {
+    const g = S.groups.find(x => x.code === o.group);
+    return h("div", { class: "vrow", "data-i": i },
+      h("span", { class: "vl" }, o.label),
+      h("span", { class: "track" }, h("i", { style: { background: g ? g.color : "var(--gold)" } })),
+      h("span", { class: "n" }, "0"));
+  }));
+  const box = h("div", { class: "sq vbox" + (many ? " many" : ""), "data-vid": v.id, style: { gridTemplateRows: "auto auto 1fr" } }, head, h("h2", { class: "sq-q" }, v.title), rows);
+  paintVote(box, true);          // vẽ ngay để không nháy số 0 khi có phiếu mới
+  return box;
 }
+
+function paintVote(box, fresh) {
+  const v = S && S.mode === "vote" ? S.vote : null;
+  if (!v || !box || (!fresh && !box.isConnected) || +box.dataset.vid !== v.id) return;
+  const k = voteRevealed(v);
+  const done = new Set((v.reveal_order || []).slice(0, k));
+  const counts = v.counts || [], max = Math.max(1, ...counts);
+  const top = Math.max(0, ...counts);
+  const fakeMax = Math.max(12, v.total);
+  box.querySelector(".vstate").textContent = v.open ? "Đang bình chọn trên điện thoại"
+    : k < v.opts.length ? "Đang công bố kết quả…" : "Kết quả bình chọn";
+  box.querySelectorAll(".vrow").forEach(row => {
+    const i = +row.dataset.i, bar = row.querySelector("i"), num = row.querySelector(".n"), lab = row.querySelector(".vl");
+    if (done.has(i)) {
+      bar.style.width = (counts[i] / max * 100) + "%";
+      num.textContent = counts[i];
+      row.classList.remove("fake");
+      const win = k === v.opts.length && counts[i] === top && top > 0;
+      row.classList.toggle("vwin", win);
+      lab.textContent = (win ? "🏆 " : "") + v.opts[i].label;
+      if (v.reveal_order[k - 1] === i && k < v.opts.length) row.classList.add("just"); else row.classList.remove("just");
+    } else {
+      row.classList.add("fake");
+      bar.style.width = (8 + Math.random() * 87) + "%";
+      num.textContent = Math.floor(Math.random() * fakeMax);
+    }
+  });
+}
+setInterval(() => { const b = document.querySelector(".vbox"); if (b) paintVote(b); }, 130);
+
+// ── Quay số: zombie đội nón Noel ăn bánh quy gừng (hình vẽ riêng của app) ──
+const ZOMBIE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 170 210">
+  <g class="z-body">
+    <rect x="60" y="152" width="17" height="40" rx="7" fill="#34405e"/>
+    <rect x="88" y="152" width="17" height="40" rx="7" fill="#2c3752"/>
+    <ellipse cx="66" cy="196" rx="16" ry="8" fill="#3d2b22"/>
+    <ellipse cx="99" cy="196" rx="16" ry="8" fill="#3d2b22"/>
+    <path d="M96 112 Q128 116 150 124" stroke="#8e2630" stroke-width="15" stroke-linecap="round" fill="none"/>
+    <circle cx="153" cy="125" r="9" fill="#7fae6c"/>
+    <path d="M48 104 Q50 94 64 92 L102 92 Q116 94 118 104 L122 158 L112 152 L104 160 L94 152 L84 160 L74 152 L64 160 L54 152 L44 158 Z" fill="#b8323d"/>
+    <path d="M47 122 l9 -7 l9 7 l9 -7 l9 7 l9 -7 l9 7 l9 -7 l9 7 l7 -5" stroke="#f7f2e8" stroke-width="3.5" fill="none" stroke-linejoin="round"/>
+    <circle cx="70" cy="138" r="3" fill="#f7f2e8"/><circle cx="96" cy="140" r="3" fill="#f7f2e8"/>
+    <path d="M100 100 Q132 96 154 100" stroke="#b8323d" stroke-width="15" stroke-linecap="round" fill="none"/>
+    <circle cx="157" cy="100" r="10" fill="#8fbf7a"/>
+    <ellipse cx="165" cy="95" rx="5" ry="3" fill="#8fbf7a"/><ellipse cx="166" cy="102" rx="5" ry="3" fill="#8fbf7a"/>
+  </g>
+  <g class="z-head">
+    <path d="M38 62 Q36 26 80 24 Q124 24 124 62 Q124 98 82 100 Q40 100 38 62 Z" fill="#8fbf7a" stroke="#5c8a50" stroke-width="3"/>
+    <path d="M52 46 l14 -4 M56 40 l2 9 M62 38 l2 9" stroke="#4d7444" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="66" cy="60" r="8" fill="#fff"/><circle cx="68" cy="61" r="3.5" fill="#1d1d1d"/>
+    <circle cx="98" cy="56" r="13" fill="#fff"/><circle cx="102" cy="58" r="5.5" fill="#1d1d1d"/>
+    <path d="M86 42 q10 -6 22 -1" stroke="#4d7444" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <g class="z-jaw">
+      <ellipse cx="100" cy="82" rx="15" ry="9" fill="#3a1520"/>
+      <rect x="90" y="74" width="5" height="6" rx="1" fill="#fff"/><rect x="97" y="74" width="5" height="6" rx="1" fill="#fff"/><rect x="104" y="74" width="5" height="5" rx="1" fill="#fff"/>
+    </g>
+  </g>
+  <g class="z-hat">
+    <path d="M34 46 C38 14 70 2 98 8 C122 13 138 26 148 50 L128 44 C112 32 92 30 74 32 C58 34 44 40 34 46 Z" fill="#d6333f"/>
+    <path d="M30 46 Q80 22 128 42 L126 54 Q80 34 32 58 Z" fill="#f7f2e8"/>
+    <circle cx="150" cy="52" r="10" fill="#f7f2e8"/>
+  </g>
+</svg>`;
+const COOKIE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 112">
+  <g fill="#c27a35" stroke="#8a4f1c" stroke-width="3" stroke-linejoin="round">
+    <path d="M50 4 a19 19 0 1 1 -0.1 0 Z"/>
+    <path d="M30 44 Q50 36 70 44 L88 50 Q99 54 95 63 Q91 70 80 66 L71 62 L72 80 L83 99 Q86 109 77 109 Q70 109 66 102 L50 85 L34 102 Q30 109 23 109 Q14 109 17 99 L28 80 L29 62 L20 66 Q9 70 5 63 Q1 54 12 50 Z"/>
+  </g>
+  <circle cx="43" cy="20" r="3" fill="#3a2416"/><circle cx="57" cy="20" r="3" fill="#3a2416"/>
+  <path d="M42 29 Q50 36 58 29" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path d="M10 56 l4 3 l4 -3 l4 3 M78 56 l4 3 l4 -3 l4 3 M24 98 l4 3 l4 -3 M68 98 l4 3 l4 -3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <circle cx="50" cy="56" r="4.5" fill="#d6333f"/><circle cx="50" cy="70" r="4.5" fill="#2e9e78"/>
+</svg>`;
+const ZOMBIE_MOUTH = { x: 100 / 170, y: 82 / 210 };      // vị trí miệng trong hình zombie (đang nhìn sang phải)
+const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+let stage = null;
+
+function svgFrom(markup) {
+  const doc = new DOMParser().parseFromString(markup, "image/svg+xml");
+  return document.importNode(doc.documentElement, true);
+}
+
+function winnersRow(d) {
+  return d.winners.length ? h("div", { class: "wlist" }, d.winners.map(w => h("span", null, w.absent ? h("s", null, w.name) : w.name, w.prize ? " · " + w.prize : ""))) : null;
+}
+
+function stopStage() { if (stage) { cancelAnimationFrame(stage.raf); stage = null; } }
+
+function drawView(d) {
+  if (!d.names || !d.names.length) {
+    stopStage();
+    const z = h("div", { class: "zidle-z" }, svgFrom(ZOMBIE_SVG));
+    return h("div", { class: "draw-s" },
+      h("div", { class: "prize" }, d.prize ? "🎁 " + d.prize : "🎁 Quay số trúng thưởng"),
+      z, h("div", { class: "reel" }, "Zombie Noel đang đói bụng…"),
+      h("div", { style: { fontSize: "1.5vw", color: "var(--muted)", marginBottom: "1vw" } }, "Mỗi người là một chiếc bánh quy. Chiếc bánh còn lại cuối cùng sẽ trúng thưởng!"),
+      winnersRow(d));
+  }
+  if (!stage || stage.seq !== d.seq) buildStage(d);
+  const st = stage;
+  st.phase = d.phase;
+  if (d.phase === "rolling") {
+    const t0 = S._at - d.elapsed_ms;
+    if (st.t0 === null || Math.abs(st.t0 - t0) > 400) st.t0 = t0;     // đồng bộ theo đồng hồ máy chủ
+  } else if (d.phase === "done") {
+    if (st.t0 === null) { st.t0 = -1e9; st.late = true; }               // mở màn hình sau khi đã quay xong
+    showWinner(st, d);
+  }
+  st.footer.replaceChildren(...[winnersRow(d)].filter(Boolean));
+  return st.root;
+}
+
+function buildStage(d) {
+  stopStage();
+  const n = d.names.length;
+  const grid = h("div", { class: "zstage" });
+  const cells = d.names.map((name, i) => h("div", { class: "zc", "data-i": i }, svgFrom(COOKIE_SVG), h("div", { class: "zn", title: name }, name)));
+  grid.append(...cells);
+  const zombie = h("div", { class: "zombie" }, svgFrom(ZOMBIE_SVG), h("div", { class: "zbubble hidden" }, "Măm!"));
+  grid.append(zombie);
+  const status = h("span", { class: "zstatus" });
+  const footer = h("div");
+  const root = h("div", { class: "zd" },
+    h("div", { class: "zhead" }, h("span", { class: "prize" }, d.prize ? "🎁 " + d.prize : "🎁 Quay số trúng thưởng"), status), grid, footer);
+  const eatenSet = new Set(d.order);
+  stage = { seq: d.seq, root, grid, cells, zombie, status, footer, order: d.order, times: d.times || [],
+            winner: d.names.findIndex((_, i) => !eatenSet.has(i)), n, t0: null, shown: 0, raf: 0, phase: d.phase, late: false, layoutKey: "" };
+  stage.raf = requestAnimationFrame(frame);
+}
+
+function layout(st) {
+  const r = st.grid.getBoundingClientRect();
+  const key = r.width + "x" + r.height;
+  if (!r.width || key === st.layoutKey) return;
+  st.layoutKey = key;
+  const cols = Math.max(1, Math.min(st.n, Math.ceil(Math.sqrt(st.n * r.width / Math.max(1, r.height)))));
+  const rows = Math.ceil(st.n / cols);
+  st.grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  st.grid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+  const cellW = r.width / cols, cellH = r.height / rows;
+  st.grid.style.setProperty("--nf", Math.max(10, Math.min(26, cellW / 12.5, cellH / 6.5)) + "px");
+  st.zw = Math.max(110, Math.min(320, cellH * 1.7, r.width / 5));
+  st.zombie.style.width = st.zw + "px";
+}
+
+function center(st, i) {
+  const g = st.grid.getBoundingClientRect(), svg = st.cells[i].querySelector("svg").getBoundingClientRect();
+  return { x: svg.left - g.left + svg.width / 2, y: svg.top - g.top + svg.height * 0.4 };
+}
+
+function crumbs(st, i) {
+  if (reduceMotion || st.late) return;
+  const c = center(st, i);
+  for (let k = 0; k < 7; k++) {
+    const a = Math.random() * Math.PI * 2, dist = 20 + Math.random() * 40;
+    const el = h("i", { class: "crumb", style: { left: c.x + "px", top: c.y + "px", "--dx": Math.cos(a) * dist + "px", "--dy": Math.sin(a) * dist + "px" } });
+    st.grid.append(el);
+    setTimeout(() => el.remove(), 800);
+  }
+}
+
+function placeZombie(st, x, y, facing, chewing, walking) {
+  const zh = st.zombie.getBoundingClientRect().height || st.zw * 210 / 170;
+  const mx = facing > 0 ? ZOMBIE_MOUTH.x * st.zw : (1 - ZOMBIE_MOUTH.x) * st.zw;
+  const top = Math.max(0, y - ZOMBIE_MOUTH.y * zh);        // không để nón bị cắt ở mép trên khung
+  st.zombie.style.transform = `translate(${x - mx}px, ${top}px)`;
+  st.zombie.querySelector("svg").style.transform = `scaleX(${facing})`;
+  st.zombie.classList.toggle("chew", chewing);
+  st.zombie.classList.toggle("walk", walking);
+  st.zombie.querySelector(".zbubble").classList.toggle("hidden", !chewing);
+}
+
+function frame() {
+  const st = stage;
+  if (!st) return;
+  layout(st);
+  const bites = st.order.length;
+  const el = st.t0 === null ? 0 : performance.now() - st.t0;
+  let k = 0;
+  while (k < bites && st.times[k] <= el) k++;
+  for (let i = st.shown; i < k; i++) {
+    st.cells[st.order[i]].classList.add("eaten");
+    crumbs(st, st.order[i]);
+    if (!st.late && i === k - 1) Sound.sfx("chomp");
+  }
+  if (k !== st.shown || !st.status.textContent) {
+    st.shown = k;
+    const left = st.n - k;
+    st.status.textContent = left > 1 ? `Còn ${left} chiếc bánh` : "Còn lại 1 chiếc bánh cuối cùng!";
+  }
+  const g = st.grid.getBoundingClientRect();
+  if (k < bites && !st.late) {
+    const from = k === 0 ? { x: -st.zw * 0.4, y: g.height * 0.55 } : center(st, st.order[k - 1]);
+    const to = center(st, st.order[k]);
+    const s0 = k === 0 ? 0 : st.times[k - 1], s1 = st.times[k];
+    const p = Math.max(0, Math.min(1, (el - s0) / Math.max(1, s1 - s0)));
+    const mp = reduceMotion ? 1 : Math.min(1, p / 0.6);
+    const e = mp < 0.5 ? 2 * mp * mp : 1 - Math.pow(-2 * mp + 2, 2) / 2;
+    placeZombie(st, from.x + (to.x - from.x) * e, from.y + (to.y - from.y) * e, to.x >= from.x ? 1 : -1, p > 0.6, p <= 0.6);
+  } else {
+    if (st.winner >= 0) st.cells[st.winner].classList.add("alone");
+    const t = bites ? el - st.times[bites - 1] : el;
+    if (st.late || t > 2200) st.zombie.classList.add("hidden");
+    else {
+      const last = bites ? center(st, st.order[bites - 1]) : { x: 0, y: g.height / 2 };
+      const off = Math.max(0, t - 700) * 0.9;
+      placeZombie(st, last.x + off, last.y, 1, false, off > 0);
+    }
+  }
+  st.raf = requestAnimationFrame(frame);
+}
+
+function showWinner(st, d) {
+  if (st.root.querySelector(".zwin") || !d.last) return;
+  if (st.winner >= 0) st.cells[st.winner].classList.add("win");
+  const big = svgFrom(COOKIE_SVG);
+  st.grid.append(h("div", { class: "zwin" },
+    h("div", { class: "zwin-cookie" }, big),
+    h("div", { class: "zwin-name" }, "🎉 " + d.last.name),
+    h("div", { class: "zwin-prize" }, d.prize ? "trúng " + d.prize : "trúng thưởng!")));
+}
+
+const fired = new Set();
+let primed = false;
+function once(key) { if (fired.has(key)) return false; fired.add(key); return primed; }
+function soundTick() {
+  if (!S) return;
+  let want = null;
+  const q = S.mode === "quiz" ? S.quiz : null, v = S.mode === "vote" ? S.vote : null, d = S.mode === "draw" ? S.draw : null;
+  if (q) {
+    if (q.phase === "open") {
+      want = "quiz";
+      const sec = secondsLeft(q.left_ms, S._at);
+      if (sec > 0 && sec <= 5 && once(`tick:${q.id}:${q.qseq}:${sec}`)) Sound.sfx("tick");
+    }
+    if (q.phase === "closed" && once(`closed:${q.id}:${q.qseq}`)) Sound.sfx("buzz");
+    if (q.phase === "reveal" && once(`reveal:${q.id}:${q.qseq}`)) Sound.sfx(q.kind === "bell" && q.result && q.result.out > 0 ? "out" : "ding");
+    if (q.phase === "end" && once(`end:${q.id}`)) Sound.sfx("fanfare");
+  }
+  if (v) {
+    if (v.open) want = "vote";
+    else {
+      const k = voteRevealed(v);
+      if (k < v.opts.length) want = "drum";
+      if (k > 0 && k < v.opts.length && once(`vpop:${v.id}:${k}`)) Sound.sfx("pop");
+      if (k === v.opts.length && once(`vwin:${v.id}`)) Sound.sfx("fanfare");
+    }
+  }
+  if (d) {
+    if (d.phase === "rolling") want = stage && stage.shown >= stage.order.length ? null : "draw";
+    if (d.phase === "done" && once(`dwin:${d.seq}`)) Sound.sfx("fanfare");
+  }
+  Sound.music(want);
+  primed = true;          // lần đầu mở trang: không phát lại các sự kiện đã xảy ra
+}
+setInterval(soundTick, 100);
 
 setInterval(() => {
   document.querySelectorAll(".tbig[data-left]").forEach(el => { el.textContent = secondsLeft(+el.dataset.left, +el.dataset.at); });
