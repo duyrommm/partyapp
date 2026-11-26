@@ -39,10 +39,16 @@ def main():
 
             # màn hình lớn
             scr_ctx = br.new_context(viewport={"width": 1920, "height": 1080})
+            scr_ctx.add_init_script("window.__PA_KEEPALIVE_MS = 1000")
             scr = scr_ctx.new_page()
+            health_calls = []
+            scr.on("request", lambda r: health_calls.append(r.url) if r.url.endswith("/health") else None)
             scr.goto(B + "/screen")
             scr.wait_for_selector(".qrbox img")
             check("Màn hình lớn hiện mã QR", scr.locator(".qrbox img").evaluate("i => i.complete && i.naturalWidth > 0"))
+            check("Có nút toàn màn hình cho máy chiếu", scr.locator("#fs").is_visible())
+            scr.wait_for_timeout(2500)
+            check("Màn hình lớn tự gọi máy chủ định kỳ để giữ app thức", len(health_calls) >= 2, len(health_calls))
 
             # MC
             mc_ctx = br.new_context(**iphone)
@@ -55,6 +61,8 @@ def main():
             phones = []
             for i, (name, group) in enumerate([("Duy Nguyễn", "IT + Legal"), ("Lan", "CN Hà Nội"), ("Minh", "Sales AW")]):
                 ctx = br.new_context(**iphone)
+                ctx.add_init_script("""Object.defineProperty(navigator, 'wakeLock', { value: { request: () => {
+                    window.__wl = (window.__wl || 0) + 1; return Promise.resolve({ released: false, release(){}, addEventListener(){} }); } } });""")
                 pg = ctx.new_page()
                 pg.goto(B)
                 if i == 0:
@@ -71,6 +79,7 @@ def main():
                 pg.wait_for_selector("text=Bạn đã vào phòng")
                 phones.append((ctx, pg))
             check("3 điện thoại vào phòng", len(phones) == 3)
+            check("Điện thoại xin giữ màn hình sáng khi chơi", all((pg.evaluate("window.__wl || 0") >= 1) for _, pg in phones))
             scr.wait_for_timeout(600)
             check("Màn hình lớn đếm đúng 3 người", scr.locator(".count").inner_text().startswith("3"))
             scr.screenshot(path=str(SHOTS / "02_screen_lobby.png"))
@@ -131,6 +140,7 @@ def main():
             scr.wait_for_timeout(400)
             scr.screenshot(path=str(SHOTS / "06_screen_reveal.png"))
             p0.wait_for_selector(".result")
+            check("Màn hình lớn vinh danh người đúng nhanh nhất", "Nhanh nhất" in scr.inner_text("body") and "Duy Nguyễn" in scr.locator(".fastest").inner_text())
             check("Trả lời đúng thì báo Chính xác và cộng điểm", "Chính xác" in p0.inner_text("body") and "+" in p0.locator(".gain").inner_text())
             phones[2][1].wait_for_selector(".result.bad")
             check("Trả lời sai thì báo chưa đúng và hiện đáp án", "Đáp án đúng: A" in phones[2][1].inner_text("body"))
@@ -249,6 +259,40 @@ def main():
             for nm, pg in [("điện thoại", p0), ("MC", mc), ("màn hình lớn", scr)]:
                 check(f"Trang {nm} không có chữ lỗi [object …] / undefined / NaN",
                       not re.search(r"\[object|undefined|NaN", pg.inner_text("body")))
+            # câu hỏi dài không tràn màn hình lớn; kết thúc có vinh danh nhóm vô địch
+            long_q = ("Trong năm 2026, phòng ban nào của công ty đã tổ chức nhiều buổi đào tạo nội bộ nhất "
+                      "cho nhân viên mới, kéo dài từ tháng Một cho đến tận tháng Mười Hai và có đông người tham dự nhất?")
+            opts = ["Phòng Kinh doanh khu vực miền Nam mở rộng", "Phòng Kế toán và Kiểm soát nội bộ tập đoàn",
+                    "Phòng Công nghệ thông tin và Pháp chế", "Chi nhánh Hà Nội cùng Chi nhánh Đà Nẵng"]
+            r = mc.evaluate("""async (t) => (await fetch('/api/mc', {method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({a:'questions', text:t})})).status""", "\t".join([long_q, *opts, "C", "20"]) + "\nCâu ngắn\tA\tB\tA")
+            check("Lưu bộ câu hỏi mới khi không có trò đang chạy", r == 200, r)
+            mc.click("#tabs button:has-text('Đố vui')")
+            mc.click("button:has-text('Chơi lại từ đầu'), button:has-text('Bắt đầu Đố vui')")
+            if mc.locator("button[data-armed]").count():
+                mc.locator("button[data-armed]").click()
+            mc.wait_for_selector("button:has-text('Mở câu 1')")
+            mc.click("button:has-text('Mở câu 1')")
+            scr.wait_for_selector(".sq-q.xlong, .sq-q.long")
+            scr.wait_for_timeout(300)
+            low = scr.evaluate("Math.max(...[...document.querySelectorAll('.sopt, .progress')].map(e => e.getBoundingClientRect().bottom))")
+            check("Câu hỏi dài vẫn nằm gọn trong màn hình lớn", low <= 1080, low)
+            scr.screenshot(path=str(SHOTS / "18_screen_long_question.png"))
+            p0.wait_for_selector(".ans")
+            p0.locator(".ans").nth(2).click()
+            mc.wait_for_selector("button:has-text('Công bố đáp án')")
+            mc.click("button:has-text('Công bố đáp án')")
+            mc.wait_for_selector("button:has-text('Kết thúc, xem chung cuộc')")
+            mc.click("button:has-text('Kết thúc, xem chung cuộc')")
+            if mc.locator("button[data-armed]").count():
+                mc.locator("button[data-armed]").click()
+            scr.wait_for_selector(".champ")
+            scr.wait_for_timeout(300)
+            check("Chung cuộc vinh danh nhóm vô địch", "Nhóm vô địch: IT + Legal" in scr.locator(".champ").inner_text())
+            low = scr.evaluate("Math.max(...[...document.querySelectorAll('.board .row')].map(r => r.getBoundingClientRect().bottom))")
+            check("Bảng chung cuộc (14 nhóm + top 10) nằm gọn trong màn hình", low <= 1080, low)
+            scr.screenshot(path=str(SHOTS / "19_screen_final.png"))
+
             # không có thanh cuộn ngang ở mọi trang
             for nm, pg in [("điện thoại", p0), ("MC", mc)]:
                 w = pg.evaluate("[innerWidth, document.documentElement.scrollWidth]")

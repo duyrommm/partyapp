@@ -178,6 +178,14 @@ button:disabled { cursor: default; }
 .screen > * { position: relative; z-index: 1; }
 @media (prefers-reduced-motion: reduce) { .snow { display: none; } * { animation: none !important; transition: none !important; } }
 
+.fs-btn { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 99px; padding: .4vw 1vw; font-size: 1vw; }
+.sq-q.long { font-size: 2.6vw; }
+.sq-q.xlong { font-size: 2vw; }
+.sopt.long { font-size: 1.6vw; min-height: 6.5vw; }
+.fastest { display: flex; gap: 1vw; flex-wrap: wrap; align-items: center; font-size: 1.5vw; color: var(--muted); }
+.fastest span { background: var(--pine-2); border-radius: 99px; padding: .4vw 1.1vw; color: var(--snow); font-weight: 600; }
+.champ { text-align: center; font-size: 2.4vw; font-weight: 800; color: var(--gold); margin: -.5vw 0 1.2vw; }
+
 /* ── MC ── */
 .mc { max-width: 760px; margin: 0 auto; padding: 14px 16px 60px; }
 .mc h1 { font-size: 20px; margin: 0; flex: 1; }

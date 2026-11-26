@@ -34,6 +34,7 @@ const MODE_LABEL = { lobby: "Sảnh chờ (mã QR)", quiz: "Hỏi đáp", vote: 
 PA.onDisarm = () => render();
 document.addEventListener("focusout", () => setTimeout(render, 0));   // gõ xong thì cập nhật
 live("/ws?role=mc", {
+  keepAwake: true,
   status: (s) => $("dot").classList.toggle("off", s !== "online"),
   message: (m) => { if (m.t === "state") { S = m; render(); } }
 });
@@ -148,6 +149,8 @@ function quizPanel(kind) {
                                                      : `${q.result.right} người đúng · ${q.result.out} người dừng lại.`) : null,
       kind === "bell" && q.alive === 1 && ["reveal", "board"].includes(q.phase)
         ? h("p", { class: "ok" }, "🏆 Chỉ còn 1 người: bấm “Kết thúc, xem chung cuộc” để vinh danh.") : null,
+      kind === "score" && q.result && q.result.fastest && q.result.fastest.length && ["reveal", "board"].includes(q.phase)
+        ? h("p", { class: "ok" }, `${q.result.right}/${q.result.total} người đúng · ⚡ nhanh nhất: ` + q.result.fastest.map(f => `${f.name} (${f.s}s)`).join(", ")) : null,
       cur ? [h("div", { class: "qa" }, cur.q),
         cur.opts.map((o, i) => h("div", { class: "qo" + (i === cur.ans ? " r" : "") }, `${LETTERS[i]}. ${o}` + (i === cur.ans ? "  ✓" : "") + (q.phase !== "ready" ? `  · ${counts[i] || 0} người` : "")))] : null,
       q.phase === "open" ? h("p", { class: "muted" }, h("span", { class: "timer", "data-left": q.left_ms, "data-at": S._at }, secondsLeft(q.left_ms, S._at) + " giây"),

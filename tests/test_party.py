@@ -96,6 +96,7 @@ def test_quiz_scoring_speed_and_groups(c, clock):
     assert 500 <= s[pid(t2)] < s[pid(t1)] <= 1000
     assert pid(t3) not in s
     assert qz["result"]["counts"][ans] == 2 and qz["result"]["right"] == 2
+    assert [f["name"] for f in qz["result"]["fastest"]] == ["Nhanh", "Chậm"], "xếp người đúng theo tốc độ, không có người sai"
     gb = A.group_board(qz)
     hn = next(g for g in gb if g["code"] == "hn")
     assert hn["avg"] == round(s[pid(t2)] / 2), "điểm nhóm = trung bình mỗi người"

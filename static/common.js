@@ -66,6 +66,11 @@
     });
     window.addEventListener("online", () => { if (!closedByUs) { backoff = 300; open(); } });
     window.addEventListener("pageshow", (e) => { if (e.persisted && !closedByUs) { backoff = 300; open(); } });
+    if (handlers.keepAwake) {
+      // Render miễn phí cho app ngủ khi lâu không có lượt truy cập HTTP mới; WebSocket chưa chắc được tính.
+      const every = window.__PA_KEEPALIVE_MS || 240000;
+      setInterval(() => { fetch("/health", { cache: "no-store" }).catch(() => {}); }, every);
+    }
     open();
     return { send, stop, restart };
   }

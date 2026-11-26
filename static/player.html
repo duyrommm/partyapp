@@ -234,6 +234,17 @@ setInterval(() => {
   });
 }, 250);
 
+// Giữ màn hình sáng khi đang chơi, để điện thoại không tự khoá làm rớt kết nối.
+let wakeLock = null;
+async function keepScreenOn() {
+  try {
+    if (!("wakeLock" in navigator) || document.hidden || (wakeLock && !wakeLock.released)) return;
+    wakeLock = await navigator.wakeLock.request("screen");
+  } catch (_) { /* trình duyệt không hỗ trợ hoặc chưa cho phép: bỏ qua */ }
+}
+document.addEventListener("click", keepScreenOn, { passive: true });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && token) keepScreenOn(); });
+
 if (token) start(); else showJoin();
 </script>
 </body>

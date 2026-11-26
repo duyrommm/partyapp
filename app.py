@@ -328,7 +328,10 @@ def quiz_reveal(qseq):
             q["gain"][pid] = gain
             q["scores"][pid] = q["scores"].get(pid, 0) + gain
             q["ms"][pid] = q["ms"].get(pid, 0) + a["ms"]
-    res = {"counts": counts, "ans": qq["ans"], "right": len(right), "total": len(q["answers"])}
+    res = {"counts": counts, "ans": qq["ans"], "right": len(right), "total": len(q["answers"]),
+           "fastest": [{"name": S["players"][p]["name"], "group": GROUP_NAME[S["players"][p]["group"]],
+                        "s": round(q["answers"][p]["ms"] / 1000, 1)}
+                       for p in sorted(right, key=lambda p: q["answers"][p]["ms"])[:3] if p in S["players"]]}
     if q["kind"] == "bell":
         before = eligible(q)
         if right:

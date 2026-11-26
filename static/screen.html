@@ -15,6 +15,7 @@
   <header class="s-top">
     <h1>{{EVENT}}</h1>
     <div class="join-mini hidden" id="mini"><span>Quét để vào chơi</span><img alt="Mã QR vào chơi"></div>
+    <button id="fs" class="fs-btn" type="button" title="Toàn màn hình">⛶ Toàn màn hình</button>
     <span id="dot" class="dot off" title="Kết nối"></span>
   </header>
   <main class="s-body" id="main"></main>
@@ -28,6 +29,14 @@ const joinUrl = location.origin + "/";
 const qrSrc = "/qr.svg?u=" + encodeURIComponent(joinUrl);
 mini.querySelector("img").src = qrSrc;
 let S = null, rollTimer = null, lastWinnerKey = "";
+const fsBtn = document.getElementById("fs");
+fsBtn.addEventListener("click", () => {
+  const el = document.documentElement;
+  (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+});
+const syncFs = () => fsBtn.classList.toggle("hidden", !!(document.fullscreenElement || document.webkitFullscreenElement));
+document.addEventListener("fullscreenchange", syncFs);
+document.addEventListener("webkitfullscreenchange", syncFs);
 
 for (let i = 0; i < 26; i++) {
   const f = h("i", { style: { left: Math.random() * 100 + "vw", fontSize: (0.6 + Math.random() * 1.2) + "vw",
@@ -36,6 +45,7 @@ for (let i = 0; i < 26; i++) {
 }
 
 live("/ws?role=screen", {
+  keepAwake: true,
   status: (s) => dot.classList.toggle("off", s !== "online"),
   message: (m) => { if (m.t === "state") { S = m; render(); } }
 });
@@ -63,11 +73,11 @@ function lobbyView() {
       h("div", { class: "recent" }, S.recent.map(p => h("span", null, p.name)))));
 }
 
-function optionsGrid(q, mode) {
+function optionsGrid(q, mode, long) {
   const counts = q.result ? q.result.counts : (q.live_counts || []);
   const total = Math.max(1, counts.reduce((a, b) => a + b, 0));
   return h("div", { class: "sq-opts" }, q.opts.map((o, i) => {
-    let cls = `sopt o${i}`;
+    let cls = `sopt o${i}` + (long ? " long" : "");
     if (mode === "reveal") cls += i === q.ans ? " right" : " dim";
     return h("div", { class: cls },
       h("span", { class: "sh", "aria-hidden": "true" }, SHAPES[i]), h("span", null, o),
@@ -94,7 +104,9 @@ function quizView(q) {
     h("span", null, `${title} · Câu ${q.idx + 1}/${q.total}`),
     bell ? h("span", null, `Còn ${fmt(q.alive)} người`) : null,
     q.phase === "open" ? h("span", { class: "tbig", "data-left": q.left_ms, "data-at": S._at }, secondsLeft(q.left_ms, S._at)) : null);
-  const parts = [headRow, h("h2", { class: "sq-q" }, q.q), optionsGrid(q, q.phase === "reveal" ? "reveal" : (q.phase === "open" ? "open" : "closed"))];
+  const qlen = q.q.length, olong = q.opts.some(o => o.length > 28);
+  const parts = [headRow, h("h2", { class: "sq-q" + (qlen > 120 ? " xlong" : qlen > 70 ? " long" : "") }, q.q),
+    optionsGrid(q, q.phase === "reveal" ? "reveal" : (q.phase === "open" ? "open" : "closed"), olong)];
   if (q.phase === "open") {
     parts.push(h("div", null, h("div", { class: "progress" }, h("i", { style: { width: (q.answered / Math.max(1, q.eligible_online || q.eligible) * 100) + "%" } })),
       h("div", { style: { marginTop: ".6vw", fontSize: "1.5vw", color: "var(--muted)" } }, `${fmt(q.answered)} người đã trả lời`)));
@@ -103,16 +115,19 @@ function quizView(q) {
   } else if (q.phase === "reveal" && q.result) {
     const r = q.result;
     let text = `${fmt(r.right)}/${fmt(r.total)} người trả lời đúng.`;
+    if (!bell && r.fastest && r.fastest.length) {
+      parts.push(h("div", { class: "fastest" }, "⚡ Nhanh nhất:", r.fastest.map((f, i) => h("span", null, `${i + 1}. ${f.name} · ${f.group} · ${f.s}s`))));
+    }
     if (bell) text = r.saved_all ? `Không ai trả lời đúng, nên cả ${fmt(q.alive)} người được giữ lại!` : `${fmt(r.out)} người dừng lại · còn ${fmt(q.alive)} người.`;
     parts.push(h("div", { class: "verdict" }, text));
   }
-  return h("div", { class: "sq", style: { gridTemplateRows: "auto auto auto 1fr" } }, parts);
+  return h("div", { class: "sq", style: { gridTemplateRows: "auto auto auto auto 1fr" } }, parts);
 }
 
 function scoreBoard(q) {
   const top = q.top || [], groups = q.groups || [];
   const maxAvg = Math.max(1, ...groups.map(g => g.avg));
-  return h("div", { class: "board" },
+  const board = h("div", { class: "board" },
     h("section", null, h("h2", null, q.phase === "end" ? "🏆 Chung cuộc · cá nhân" : "Cá nhân dẫn đầu"),
       h("div", { class: "rows" }, top.map((p, i) => h("div", { class: "row" + (i === 0 ? " first" : "") },
         h("span", { class: "pos" }, i + 1), h("span", { class: "nm" }, p.name, h("small", null, p.group)), h("span", { class: "sc" }, fmt(p.score)))))),
@@ -120,6 +135,10 @@ function scoreBoard(q) {
       h("div", { class: "rows" }, groups.slice(0, 14).map((g, i) => h("div", { class: "row gbar" + (i === 0 ? " first" : ""), style: { fontSize: "1.15vw", padding: ".3vw 1.2vw" } },
         h("i", { class: "fill", style: { width: (g.avg / maxAvg * 100) + "%", background: g.color } }),
         h("span", { class: "pos" }, i + 1), h("span", { class: "nm" }, g.name, h("small", null, g.members + " người")), h("span", { class: "sc" }, fmt(g.avg)))))));
+  if (q.phase !== "end" || !groups.length || !top.length) return board;
+  Object.assign(board.style, { flex: "1", minHeight: "0", height: "auto" });
+  return h("div", { style: { display: "flex", flexDirection: "column", height: "100%" } },
+    h("div", { class: "champ" }, `🏆 Nhóm vô địch: ${groups[0].name} · Cá nhân xuất sắc: ${top[0].name}`), board);
 }
 
 function bellBoard(q) {
