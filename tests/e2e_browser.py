@@ -328,7 +328,7 @@ def main():
             win_banner = scr.locator(".zwin-name").inner_text().replace("🎉", "").strip()
             check("Tên trên bảng công bố khớp chiếc bánh còn lại", win_cookie == win_banner, (win_cookie, win_banner))
             check("Bảng công bố ghi tên giải", "Giải Ba – Tai nghe" in scr.locator(".zwin").inner_text())
-            check("Công bố người trúng có kèn chiến thắng", scr.evaluate("window.__soundLog.slice(-3)").count("sfx:fanfare") >= 1)
+            check("Công bố người trúng bằng tiếng cười hô hô hô", "sfx:hohoho" in scr.evaluate("window.__soundLog.slice(-4)"))
             phones[0][1].wait_for_timeout(800)
             won = [pg for _, pg in phones if pg.locator("text=Bánh của bạn sống sót").count()]
             others_ok = all(("Chúc mừng " + win_banner) in pg.inner_text("body") for _, pg in phones if pg not in won)

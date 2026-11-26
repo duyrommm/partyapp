@@ -22,7 +22,7 @@
   <main class="s-body" id="main"></main>
 </div>
 <script src="/static/common.js?v=3"></script>
-<script src="/static/sound.js?v=3"></script>
+<script src="/static/sound.js?v=4"></script>
 <script>
 "use strict";
 const { h, live, secondsLeft, SHAPES, LETTERS } = PA;
@@ -439,7 +439,7 @@ function soundTick() {
   }
   if (d) {
     if (d.phase === "rolling") want = stage && stage.shown >= stage.order.length ? null : "draw";
-    if (d.phase === "done" && once(`dwin:${d.seq}`)) Sound.sfx("fanfare");
+    if (d.phase === "done" && once(`dwin:${d.seq}`)) Sound.sfx("hohoho");
   }
   Sound.music(want);
   primed = true;          // lần đầu mở trang: không phát lại các sự kiện đã xảy ra
