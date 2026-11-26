@@ -310,6 +310,21 @@ def main():
             scr.screenshot(path=str(SHOTS / "14_screen_zombie.png"))
             eaten_before = scr.locator(".zc.eaten").count()
             check("Zombie ăn dần các bánh", eaten_before >= 2, eaten_before)
+            sync = scr.evaluate("""() => new Promise(done => {
+                const log = window.__soundLog, res = { chomps: 0, offBubble: 0, bubbles: 0, silentBubbles: 0 };
+                let n = log.length, shown = false, heard = false;
+                const iv = setInterval(() => {
+                    const vis = !document.querySelector('.zbubble').classList.contains('hidden');
+                    const newC = log.slice(n).filter(x => x === 'sfx:chomp').length; n = log.length;
+                    if (newC) { res.chomps += newC; heard = true; if (!vis) res.offBubble += newC; }
+                    if (vis && !shown) { res.bubbles++; heard = newC > 0; }
+                    if (!vis && shown && !heard) res.silentBubbles++;
+                    shown = vis;
+                }, 20);
+                setTimeout(() => { clearInterval(iv); done(res); }, 6000);
+            })""")
+            check("Tiếng cạp phát đúng lúc chữ Măm! hiện, không có lần Măm nào im lặng",
+                  sync["chomps"] >= 3 and sync["offBubble"] == 0 and sync["silentBubbles"] == 0, sync)
             check("Quay số có nhạc nền và tiếng nhai bánh", scr.evaluate("Sound.current()") == "draw"
                   and scr.evaluate("window.__soundLog.filter(x => x === 'sfx:chomp').length") >= 2)
             p0.wait_for_selector("text=Zombie đang ăn bánh quy")

@@ -22,7 +22,7 @@
   <main class="s-body" id="main"></main>
 </div>
 <script src="/static/common.js?v=3"></script>
-<script src="/static/sound.js?v=7"></script>
+<script src="/static/sound.js?v=8"></script>
 <script>
 "use strict";
 const { h, live, secondsLeft, SHAPES, LETTERS } = PA;
@@ -262,7 +262,10 @@ const COOKIE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 112
   <path d="M10 56 l4 3 l4 -3 l4 3 M78 56 l4 3 l4 -3 l4 3 M24 98 l4 3 l4 -3 M68 98 l4 3 l4 -3" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
   <circle cx="50" cy="56" r="4.5" fill="#d6333f"/><circle cx="50" cy="70" r="4.5" fill="#2e9e78"/>
 </svg>`;
-const ZOMBIE_MOUTH = { x: 100 / 170, y: 82 / 210 };      // vị trí miệng trong hình zombie (đang nhìn sang phải)
+const ZOMBIE_MOUTH = { x: 100 / 170, y: 82 / 210 };
+const CHEW_MAX_MS = 900;        // thời gian nhai tối đa mỗi miếng
+const CHOMP_GAP_MS = 320;       // hai tiếng cạp cách nhau ít nhất (danh sách đông không bị dồn tiếng)
+const CHOMP_REPEAT_MS = 520;    // nhai lâu thì cạp thêm sau khoảng này      // vị trí miệng trong hình zombie (đang nhìn sang phải)
 const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 let stage = null;
 
@@ -315,7 +318,7 @@ function buildStage(d) {
     h("div", { class: "zhead" }, h("span", { class: "prize" }, d.prize ? "🎁 " + d.prize : "🎁 Quay số trúng thưởng"), status), grid, footer);
   const eatenSet = new Set(d.order);
   stage = { seq: d.seq, root, grid, cells, zombie, status, footer, order: d.order, times: d.times || [],
-            winner: d.names.findIndex((_, i) => !eatenSet.has(i)), n, t0: null, shown: 0, raf: 0, phase: d.phase, late: false, layoutKey: "" };
+            winner: d.names.findIndex((_, i) => !eatenSet.has(i)), n, t0: null, shown: 0, raf: 0, lastChomp: -1e9, chompK: -1, phase: d.phase, late: false, layoutKey: "" };
   stage.raf = requestAnimationFrame(frame);
 }
 
@@ -372,7 +375,6 @@ function frame() {
   for (let i = st.shown; i < k; i++) {
     st.cells[st.order[i]].classList.add("eaten");
     crumbs(st, st.order[i]);
-    if (!st.late && i === k - 1) Sound.sfx("chomp");
   }
   if (k !== st.shown || !st.status.textContent) {
     st.shown = k;
@@ -384,10 +386,22 @@ function frame() {
     const from = k === 0 ? { x: -st.zw * 0.4, y: g.height * 0.55 } : center(st, st.order[k - 1]);
     const to = center(st, st.order[k]);
     const s0 = k === 0 ? 0 : st.times[k - 1], s1 = st.times[k];
-    const p = Math.max(0, Math.min(1, (el - s0) / Math.max(1, s1 - s0)));
-    const mp = reduceMotion ? 1 : Math.min(1, p / 0.6);
+    // pha nhai "Măm!" ở cuối mỗi miếng: tối đa 0,9 giây, không quá nửa thời gian của miếng đó
+    const chew = Math.min(CHEW_MAX_MS, (s1 - s0) * 0.5), walkEnd = s1 - chew;
+    const chewing = el >= walkEnd;
+    const mp = reduceMotion ? 1 : Math.max(0, Math.min(1, (el - s0) / Math.max(1, walkEnd - s0)));
     const e = mp < 0.5 ? 2 * mp * mp : 1 - Math.pow(-2 * mp + 2, 2) / 2;
-    placeZombie(st, from.x + (to.x - from.x) * e, from.y + (to.y - from.y) * e, to.x >= from.x ? 1 : -1, p > 0.6, p <= 0.6);
+    placeZombie(st, from.x + (to.x - from.x) * e, from.y + (to.y - from.y) * e, to.x >= from.x ? 1 : -1, chewing, !chewing);
+    // tiếng "cạp cạp" phát đúng lúc chữ "Măm!" hiện; nhai lâu thì cạp thêm; danh sách đông thì giãn tiếng
+    const now = performance.now();
+    if (chewing && now - st.lastChomp >= CHOMP_GAP_MS) {
+      const first = st.chompK !== k;
+      if (first || (now - st.lastChomp >= CHOMP_REPEAT_MS && s1 - el > 300)) {
+        Sound.sfx("chomp");
+        st.lastChomp = now;
+        st.chompK = k;
+      }
+    }
   } else {
     if (st.winner >= 0) st.cells[st.winner].classList.add("alone");
     const t = bites ? el - st.times[bites - 1] : el;
